@@ -431,6 +431,7 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
     text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
+    text += f"💳 **Использовано маржи:** ${_fmt_number(str(total_margin_used))}\n"
     
     pnl_emoji = "📈" if unrealized_pnl >= 0 else "📉"
     pnl_sign = "+" if unrealized_pnl >= 0 else "-"
@@ -449,9 +450,11 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             side = "🟢 LONG" if float(szi) > 0 else "🔴 SHORT"
             size_abs = abs(float(szi))
             
-            # Calculate ROE for this position
+            # Calculate ROE and margin used for this position
             upnl_float = float(unrealized_pnl)
             position_roe = 0.0
+            margin_used_pos = 0.0
+            
             try:
                 size = float(szi) if szi else 0
                 price = float(entry_px) if entry_px else 0
@@ -469,6 +472,7 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
             text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
             text += f"  ├ Плечо: {leverage_val}x\n"
+            text += f"  ├ Маржа: ${_fmt_number(str(margin_used_pos))}\n"
             upnl_sign = "+" if upnl_float >= 0 else "-"
             roe_sign = "+" if position_roe >= 0 else "-"
             text += f"  └ PnL: {upnl_sign}${_fmt_number(str(abs(upnl_float)))} ({roe_sign}{abs(position_roe):.2f}%)\n\n"
