@@ -1,5 +1,7 @@
 set -euo pipefail
 
+git pull
+
 APP_NAME="hyperliquid-trader-watcher"
 IMAGE_NAME="${APP_NAME}:latest"
 
