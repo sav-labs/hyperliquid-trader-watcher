@@ -124,8 +124,7 @@ async def admin_users(call: CallbackQuery, db: Database, settings: Settings) -> 
     for u in all_users[:15]:
         await call.message.answer(
             f"@{u.username or '—'} (id={u.telegram_id})\n"
-            f"Статус: {u.status.value}\n"
-            f"Доставка: {u.delivery_mode.value} {u.delivery_chat_id or ''}",
+            f"Статус: {u.status.value}",
             reply_markup=admin_user_kb(
                 u.telegram_id,
                 u.status.value,
@@ -157,8 +156,7 @@ async def admin_open_user(message: Message, db: Database, settings: Settings) ->
 
     await message.answer(
         f"Пользователь: @{target.username or '—'} (id={target.telegram_id})\n"
-        f"Статус: {target.status.value}\n"
-        f"Доставка: {target.delivery_mode.value} {target.delivery_chat_id or ''}",
+        f"Статус: {target.status.value}",
         reply_markup=admin_user_kb(
             target.telegram_id,
             target.status.value,

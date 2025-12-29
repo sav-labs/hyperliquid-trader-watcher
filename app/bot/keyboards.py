@@ -20,6 +20,7 @@ def main_menu_kb(is_admin: bool) -> InlineKeyboardMarkup:
     ]
     if is_admin:
         rows.append([InlineKeyboardButton(text="Админ-панель", callback_data="menu:admin")])
+        rows.append([InlineKeyboardButton(text="Настройки", callback_data="menu:settings")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
