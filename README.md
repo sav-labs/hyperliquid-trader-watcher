@@ -62,12 +62,37 @@ chmod +x ./deploy.sh
 
 - соберёт образ
 - остановит предыдущий контейнер (если был)
-- поднимет новый контейнер с volume `./data → /data` (БД и логи сохраняются между перезапусками)
+- создаст Docker Named Volume `hyperliquid-trader-watcher-data` (если не существует)
+- поднимет новый контейнер с volume для **постоянного хранения** БД и логов
+
+**⚠️ Важно:** Данные сохраняются в Docker Volume и **не теряются** при перезапуске/пересборке контейнера.
 
 Логи:
 
 ```bash
 docker logs -f hyperliquid-trader-watcher
+```
+
+### Управление данными
+
+**Просмотр volumes:**
+```bash
+docker volume ls | grep hyperliquid
+```
+
+**Бэкап БД:**
+```bash
+docker run --rm -v hyperliquid-trader-watcher-data:/data -v $(pwd):/backup alpine tar czf /backup/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
+```
+
+**Восстановление из бэкапа:**
+```bash
+docker run --rm -v hyperliquid-trader-watcher-data:/data -v $(pwd):/backup alpine tar xzf /backup/backup-YYYYMMDD-HHMMSS.tar.gz -C /data
+```
+
+**Удаление всех данных (осторожно!):**
+```bash
+docker volume rm hyperliquid-trader-watcher-data
 ```
 
 ## Переменные окружения
