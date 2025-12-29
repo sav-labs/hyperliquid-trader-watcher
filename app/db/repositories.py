@@ -109,6 +109,7 @@ class TraderRepository:
             .values(user_id=user.id, trader_id=trader.id)
             .prefix_with("OR IGNORE")
         )
+        await self._s.flush()  # Ensure the link is written to DB
         return trader
 
     async def remove_trader_from_user(self, user: User, trader_id: int) -> None:
