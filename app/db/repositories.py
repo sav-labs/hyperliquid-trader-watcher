@@ -4,6 +4,7 @@ import logging
 from typing import Iterable
 
 from sqlalchemy import Select, case, delete, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -21,15 +22,28 @@ class UserRepository:
         return res.scalar_one_or_none()
 
     async def get_or_create(self, telegram_id: int, username: str | None) -> User:
+        # Fast path: existing user
         user = await self.get_by_telegram_id(telegram_id)
         if user is not None:
             if username and user.username != username:
                 user.username = username
             return user
+
+        # Race-safe path: concurrent updates may insert same telegram_id.
         user = User(telegram_id=telegram_id, username=username)
         self._s.add(user)
-        await self._s.flush()
-        return user
+        try:
+            await self._s.flush()
+            return user
+        except IntegrityError:
+            # Another concurrent session inserted the user first.
+            await self._s.rollback()
+            existing = await self.get_by_telegram_id(telegram_id)
+            if existing is None:
+                raise
+            if username and existing.username != username:
+                existing.username = username
+            return existing
 
     async def set_admin_flag(self, telegram_id: int, is_admin: bool) -> None:
         await self._s.execute(update(User).where(User.telegram_id == telegram_id).values(is_admin=is_admin))
