@@ -384,8 +384,10 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     # Positions
     positions = user_state.get("assetPositions", [])
     
-    # Calculate Unrealized PnL by summing from all positions
+    # Calculate Unrealized PnL and Total Margin Used from all positions
     unrealized_pnl = 0.0
+    total_margin_used = 0.0
+    
     for pos in positions:
         position = pos.get("position", {})
         upnl = position.get("unrealizedPnl", "0")
@@ -393,19 +395,38 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             unrealized_pnl += float(upnl)
         except (ValueError, TypeError):
             pass
+        
+        # Calculate margin used for this position
+        # Margin Used = Position Value / Leverage
+        szi = position.get("szi", "0")
+        entry_px = position.get("entryPx", "0")
+        leverage_info = position.get("leverage", {})
+        leverage_val = leverage_info.get("value", 1) if isinstance(leverage_info, dict) else 1
+        
+        try:
+            size = abs(float(szi))
+            price = float(entry_px)
+            leverage = float(leverage_val)
+            
+            if leverage > 0:
+                position_value = size * price
+                margin_used = position_value / leverage
+                total_margin_used += margin_used
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
     
-    # Calculate ROE (Return On Equity) - percentage based on account value
-    # This shows the real return considering leverage
+    # Calculate ROE (Return On Equity) - percentage based on margin used
+    # This is how HyperDash calculates it
+    logger.info(f"Total margin used: ${total_margin_used:,.2f}, Unrealized PnL: ${unrealized_pnl:,.2f}")
+    
     pnl_percent = 0.0
-    acct_val_float = float(account_value)
-    if acct_val_float > 0:
-        # Account value already includes unrealized PnL, so we calculate from equity before PnL
-        equity_before_pnl = acct_val_float - unrealized_pnl
-        if equity_before_pnl > 0:
-            pnl_percent = (unrealized_pnl / equity_before_pnl) * 100
-        else:
-            # Fallback to account value if calculation fails
-            pnl_percent = (unrealized_pnl / acct_val_float) * 100
+    if total_margin_used > 0:
+        pnl_percent = (unrealized_pnl / total_margin_used) * 100
+        logger.info(f"ROE calculated: {pnl_percent:.2f}%")
+    elif float(account_value) > 0:
+        # Fallback to account value if margin calculation fails
+        pnl_percent = (unrealized_pnl / float(account_value)) * 100
+        logger.info(f"ROE calculated (fallback): {pnl_percent:.2f}%")
     
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
@@ -428,13 +449,29 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             side = "🟢 LONG" if float(szi) > 0 else "🔴 SHORT"
             size_abs = abs(float(szi))
             
+            # Calculate ROE for this position
+            upnl_float = float(unrealized_pnl)
+            position_roe = 0.0
+            try:
+                size = float(szi) if szi else 0
+                price = float(entry_px) if entry_px else 0
+                lev = float(leverage_val) if leverage_val else 1
+                
+                if lev > 0 and price > 0:
+                    position_value = abs(size) * price
+                    margin_used_pos = position_value / lev
+                    if margin_used_pos > 0:
+                        position_roe = (upnl_float / margin_used_pos) * 100
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
+            
             text += f"{side} **{coin}**\n"
             text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
             text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
             text += f"  ├ Плечо: {leverage_val}x\n"
-            upnl_float = float(unrealized_pnl)
             upnl_sign = "+" if upnl_float >= 0 else "-"
-            text += f"  └ PnL: {upnl_sign}${_fmt_number(str(abs(upnl_float)))}\n\n"
+            roe_sign = "+" if position_roe >= 0 else "-"
+            text += f"  └ PnL: {upnl_sign}${_fmt_number(str(abs(upnl_float)))} ({roe_sign}{abs(position_roe):.2f}%)\n\n"
     else:
         text += "📭 Нет открытых позиций\n"
     
