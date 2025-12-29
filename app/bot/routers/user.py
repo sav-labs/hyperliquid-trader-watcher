@@ -151,13 +151,17 @@ async def settings_menu(call: CallbackQuery, db: Database) -> None:
         mode = user.delivery_mode.value
         chat = user.delivery_chat_id or ""
 
-    await call.message.edit_text(
-        "Настройки доставки:\n"
-        f"- Текущий режим: {mode} {chat}\n\n"
-        "По умолчанию алерты приходят в ЛС.\n"
-        "Настройку отправки в канал делает администратор.",
-        reply_markup=main_menu_kb(is_admin=user.is_admin),
-    )
+    try:
+        await call.message.edit_text(
+            "Настройки доставки:\n"
+            f"- Текущий режим: {mode} {chat}\n\n"
+            "По умолчанию алерты приходят в ЛС.\n"
+            "Настройку отправки в канал делает администратор.",
+            reply_markup=main_menu_kb(is_admin=user.is_admin),
+        )
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            raise
     await call.answer()
 
 
@@ -269,10 +273,6 @@ async def traders_history(call: CallbackQuery, db: Database, hl: HyperliquidClie
     # Fetch fresh ledger updates (deposits/withdrawals)
     ledger_updates = await hl.fetch_recent_ledger_updates(trader.address, limit=20)
     
-    # Debug: log first entry structure
-    if ledger_updates:
-        logger.info(f"Ledger update sample: {ledger_updates[0]}")
-    
     if not ledger_updates:
         text = f"📊 История: {_short_addr(trader.address)}\n\nИстория пуста."
     else:
@@ -373,64 +373,67 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     
     # Parse data
     margin_summary = user_state.get("marginSummary", {})
-    
-    # Debug: log margin summary to understand available fields
-    logger.info(f"Margin summary keys: {list(margin_summary.keys())}")
-    logger.info(f"Margin summary: {margin_summary}")
-    
     account_value = margin_summary.get("accountValue", "0")
-    total_ntl_pos = margin_summary.get("totalNtlPos", "0")
+    
+    # Use totalMarginUsed from API if available (more accurate)
+    total_margin_used_from_api = margin_summary.get("totalMarginUsed", None)
     
     # Positions
     positions = user_state.get("assetPositions", [])
     
-    # Calculate Unrealized PnL and Total Margin Used from all positions
+    # Calculate Unrealized PnL from all positions
     unrealized_pnl = 0.0
-    total_margin_used = 0.0
-    
     for pos in positions:
         position = pos.get("position", {})
         upnl = position.get("unrealizedPnl", "0")
-        szi = position.get("szi", "0")
-        entry_px = position.get("entryPx", "0")
-        leverage_info = position.get("leverage", {})
-        leverage_val = leverage_info.get("value", 1) if isinstance(leverage_info, dict) else 1
-        
         try:
-            upnl_float = float(upnl)
-            unrealized_pnl += upnl_float
-            
-            size = float(szi)
-            entry_price = float(entry_px)
-            leverage = float(leverage_val)
-            
-            # Calculate current price from unrealized PnL
-            # Current Price = Entry Price + (Unrealized PnL / Size)
-            if size != 0:
-                current_price = entry_price + (upnl_float / size)
-            else:
-                current_price = entry_price
-            
-            # Calculate margin used based on CURRENT price
-            if leverage > 0 and current_price > 0:
-                position_value = abs(size) * current_price
-                margin_used = position_value / leverage
-                total_margin_used += margin_used
-        except (ValueError, TypeError, ZeroDivisionError):
+            unrealized_pnl += float(upnl)
+        except (ValueError, TypeError):
             pass
     
-    # Calculate ROE (Return On Equity) - percentage based on margin used
-    # This is how HyperDash calculates it
-    logger.info(f"Total margin used: ${total_margin_used:,.2f}, Unrealized PnL: ${unrealized_pnl:,.2f}")
-    
+    # Use API's totalMarginUsed for ROE calculation (most accurate)
     pnl_percent = 0.0
-    if total_margin_used > 0:
-        pnl_percent = (unrealized_pnl / total_margin_used) * 100
-        logger.info(f"ROE calculated: {pnl_percent:.2f}%")
-    elif float(account_value) > 0:
-        # Fallback to account value if margin calculation fails
-        pnl_percent = (unrealized_pnl / float(account_value)) * 100
-        logger.info(f"ROE calculated (fallback): {pnl_percent:.2f}%")
+    if total_margin_used_from_api:
+        try:
+            total_margin_used = float(total_margin_used_from_api)
+            if total_margin_used > 0:
+                pnl_percent = (unrealized_pnl / total_margin_used) * 100
+        except (ValueError, TypeError, ZeroDivisionError):
+            total_margin_used_from_api = None
+    
+    # Fallback: calculate margin used if API doesn't provide it
+    if not total_margin_used_from_api:
+        total_margin_used = 0.0
+        for pos in positions:
+            position = pos.get("position", {})
+            upnl = position.get("unrealizedPnl", "0")
+            szi = position.get("szi", "0")
+            entry_px = position.get("entryPx", "0")
+            leverage_info = position.get("leverage", {})
+            leverage_val = leverage_info.get("value", 1) if isinstance(leverage_info, dict) else 1
+            
+            try:
+                upnl_float = float(upnl)
+                size = float(szi)
+                entry_price = float(entry_px)
+                leverage = float(leverage_val)
+                
+                # Calculate current price from unrealized PnL
+                if size != 0:
+                    current_price = entry_price + (upnl_float / size)
+                else:
+                    current_price = entry_price
+                
+                # Calculate margin used based on CURRENT price
+                if leverage > 0 and current_price > 0:
+                    position_value = abs(size) * current_price
+                    margin_used = position_value / leverage
+                    total_margin_used += margin_used
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
+        
+        if total_margin_used > 0:
+            pnl_percent = (unrealized_pnl / total_margin_used) * 100
     
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"

@@ -16,10 +16,7 @@ def _fmt_balance(value: str | None) -> str | None:
 
 def main_menu_kb(is_admin: bool) -> InlineKeyboardMarkup:
     rows = [
-        [
-            InlineKeyboardButton(text="Трейдеры", callback_data="menu:traders"),
-            InlineKeyboardButton(text="Настройки", callback_data="menu:settings"),
-        ]
+        [InlineKeyboardButton(text="Трейдеры", callback_data="menu:traders")]
     ]
     if is_admin:
         rows.append([InlineKeyboardButton(text="Админ-панель", callback_data="menu:admin")])
