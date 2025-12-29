@@ -167,12 +167,12 @@ async def traders_add_text(message: Message, db: Database, state: FSMContext, hl
         for a in addrs:
             try:
                 await traders.add_trader_to_user(user, a)
+                await session.commit()  # Commit immediately after each trader
                 added += 1
             except Exception:
                 # likely unique constraint
                 logger.debug("Could not add trader %s for user %s", a, tg.id, exc_info=True)
-
-        await session.commit()
+                await session.rollback()  # Rollback on error to continue loop
 
     await state.clear()
     await message.answer(f"Готово. Добавлено: {added}/{len(addrs)}")
