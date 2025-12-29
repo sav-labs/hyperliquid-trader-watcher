@@ -375,22 +375,32 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     margin_summary = user_state.get("marginSummary", {})
     account_value = margin_summary.get("accountValue", "0")
     total_ntl_pos = margin_summary.get("totalNtlPos", "0")
-    total_raw_usd = margin_summary.get("totalRawUsd", "0")
-    
-    # Calculate PnL
-    pnl = float(total_raw_usd) - float(total_ntl_pos) if total_ntl_pos != "0" else 0
-    pnl_percent = (pnl / float(total_ntl_pos) * 100) if float(total_ntl_pos) > 0 else 0
     
     # Positions
     positions = user_state.get("assetPositions", [])
+    
+    # Calculate Unrealized PnL by summing from all positions
+    unrealized_pnl = 0.0
+    for pos in positions:
+        position = pos.get("position", {})
+        upnl = position.get("unrealizedPnl", "0")
+        try:
+            unrealized_pnl += float(upnl)
+        except (ValueError, TypeError):
+            pass
+    
+    # Calculate PnL percentage based on total position value
+    pnl_percent = 0.0
+    if float(total_ntl_pos) > 0:
+        pnl_percent = (unrealized_pnl / float(total_ntl_pos)) * 100
     
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
     text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
     
-    pnl_emoji = "📈" if pnl >= 0 else "📉"
-    pnl_sign = "+" if pnl >= 0 else ""
-    text += f"{pnl_emoji} **PnL:** {pnl_sign}${_fmt_number(str(pnl))} ({pnl_sign}{pnl_percent:.2f}%)\n\n"
+    pnl_emoji = "📈" if unrealized_pnl >= 0 else "📉"
+    pnl_sign = "+" if unrealized_pnl >= 0 else "-"
+    text += f"{pnl_emoji} **Unrealized PnL:** {pnl_sign}${_fmt_number(str(abs(unrealized_pnl)))} ({pnl_sign}{abs(pnl_percent):.2f}%)\n\n"
     
     if positions:
         text += "**🔹 Открытые позиции:**\n\n"
@@ -409,8 +419,9 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
             text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
             text += f"  ├ Плечо: {leverage_val}x\n"
-            upnl_sign = "+" if float(unrealized_pnl) >= 0 else ""
-            text += f"  └ PnL: {upnl_sign}${_fmt_number(unrealized_pnl)}\n\n"
+            upnl_float = float(unrealized_pnl)
+            upnl_sign = "+" if upnl_float >= 0 else "-"
+            text += f"  └ PnL: {upnl_sign}${_fmt_number(str(abs(upnl_float)))}\n\n"
     else:
         text += "📭 Нет открытых позиций\n"
     
