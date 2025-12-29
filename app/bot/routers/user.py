@@ -267,7 +267,7 @@ async def traders_history(call: CallbackQuery, db: Database, hl: HyperliquidClie
     await call.answer("Загружаю историю...")
     
     # Fetch fresh ledger updates (deposits/withdrawals)
-    ledger_updates = await hl.user_non_funding_ledger_updates(trader.address, limit=20)
+    ledger_updates = await hl.fetch_recent_ledger_updates(trader.address, limit=20)
     
     if not ledger_updates:
         text = f"📊 История: {_short_addr(trader.address)}\n\nИстория пуста."
@@ -338,11 +338,13 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     
     # Fetch fresh data from Hyperliquid API
     try:
-        user_state = await hl.user_state(trader.address)
+        snapshot = await hl.fetch_user_state(trader.address)
     except Exception as e:
         logger.error(f"Failed to fetch trader state: {e}", exc_info=True)
         await call.answer("Ошибка получения данных", show_alert=True)
         return
+    
+    user_state = snapshot.user_state
     
     # Parse data
     margin_summary = user_state.get("marginSummary", {})

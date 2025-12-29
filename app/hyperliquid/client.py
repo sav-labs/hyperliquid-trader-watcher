@@ -78,4 +78,17 @@ class HyperliquidClient:
             return [x for x in data if isinstance(x, dict)]
         return []
 
+    async def fetch_recent_ledger_updates(self, address: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch recent ledger updates (deposits/withdrawals) for user."""
+        addr = address.lower()
+        
+        # Get updates from last 30 days
+        import time
+        end_time_ms = int(time.time() * 1000)
+        start_time_ms = end_time_ms - (30 * 24 * 60 * 60 * 1000)  # 30 days ago
+        
+        updates = await self.fetch_non_funding_ledger_updates(addr, start_time_ms, end_time_ms)
+        # Return most recent first
+        return sorted(updates, key=lambda x: x.get("time", 0), reverse=True)[:limit]
+
 
