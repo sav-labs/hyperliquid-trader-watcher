@@ -269,25 +269,50 @@ async def traders_history(call: CallbackQuery, db: Database, hl: HyperliquidClie
     # Fetch fresh ledger updates (deposits/withdrawals)
     ledger_updates = await hl.fetch_recent_ledger_updates(trader.address, limit=20)
     
+    # Debug: log first entry structure
+    if ledger_updates:
+        logger.info(f"Ledger update sample: {ledger_updates[0]}")
+    
     if not ledger_updates:
         text = f"📊 История: {_short_addr(trader.address)}\n\nИстория пуста."
     else:
         text = f"📊 История: {_short_addr(trader.address)}\n\n"
         for upd in ledger_updates[:10]:  # Last 10 entries
             delta = upd.get("delta", {})
-            usd_delta = delta.get("total", "0")
             timestamp = upd.get("time", 0)
             dt_str = _format_timestamp(timestamp)
             
-            if float(usd_delta) > 0:
-                text += f"✅ Депозит: +${_fmt_number(usd_delta)} ({dt_str})\n"
+            # Parse delta structure
+            # Delta can be: {"type": "deposit", "usdc": "amount"} or similar
+            delta_type = delta.get("type", "unknown")
+            usdc_amount = delta.get("usdc", "0")
+            
+            # Also check for "total" field
+            if not usdc_amount or usdc_amount == "0":
+                usdc_amount = delta.get("total", "0")
+            
+            try:
+                amount_float = float(usdc_amount)
+            except (ValueError, TypeError):
+                amount_float = 0
+            
+            if delta_type == "deposit" or amount_float > 0:
+                text += f"✅ Депозит: +${_fmt_number(abs(amount_float))} ({dt_str})\n"
+            elif delta_type == "withdraw" or amount_float < 0:
+                text += f"❌ Вывод: ${_fmt_number(abs(amount_float))} ({dt_str})\n"
             else:
-                text += f"❌ Вывод: ${_fmt_number(usd_delta)} ({dt_str})\n"
+                # Fallback: show raw data for debugging
+                text += f"🔹 {delta_type}: ${_fmt_number(abs(amount_float))} ({dt_str})\n"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="« Назад", callback_data=f"traders:view:{trader_id}")]
     ])
-    await call.message.edit_text(text, reply_markup=kb)
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except Exception as e:
+        # If message not modified, just ignore
+        if "message is not modified" not in str(e).lower():
+            raise
 
 
 @router.callback_query(F.data.startswith("traders:remove:"))
@@ -392,7 +417,12 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     from app.bot.keyboards import trader_detail_kb
     
     if edit:
-        await call.message.edit_text(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
+        try:
+            await call.message.edit_text(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
+        except Exception as e:
+            # If message not modified, just ignore
+            if "message is not modified" not in str(e).lower():
+                raise
     else:
         await call.message.answer(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
 
