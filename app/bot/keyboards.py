@@ -38,7 +38,7 @@ def traders_menu_kb() -> InlineKeyboardMarkup:
 def traders_list_kb(traders: list[tuple[int, str, str | None]]) -> InlineKeyboardMarkup:
     """
     traders: [(trader_id, short_address, account_value_str)]
-    Remove uses inline button (as requested).
+    Click on trader shows details.
     """
     rows: list[list[InlineKeyboardButton]] = []
     for trader_id, short_addr, acct_val in traders:
@@ -46,10 +46,24 @@ def traders_list_kb(traders: list[tuple[int, str, str | None]]) -> InlineKeyboar
         bal = _fmt_balance(acct_val)
         if bal:
             label = f"{label} • ${bal}"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"traders:remove:{trader_id}")])
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"traders:view:{trader_id}")])
     rows.append([InlineKeyboardButton(text="Добавить", callback_data="traders:add")])
     rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def trader_detail_kb(trader_id: int) -> InlineKeyboardMarkup:
+    """
+    Keyboard for trader detail card.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"traders:refresh:{trader_id}")],
+            [InlineKeyboardButton(text="💰 История депозитов/выводов", callback_data=f"traders:history:{trader_id}")],
+            [InlineKeyboardButton(text="🗑 Удалить трейдера", callback_data=f"traders:remove:{trader_id}")],
+            [InlineKeyboardButton(text="« К списку", callback_data="traders:list")],
+        ]
+    )
 
 
 def admin_menu_kb(pending_count: int) -> InlineKeyboardMarkup:

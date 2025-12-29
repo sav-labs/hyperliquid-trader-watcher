@@ -6,7 +6,7 @@ import time
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.keyboards import main_menu_kb, traders_list_kb, traders_menu_kb
 from app.bot.states import UserStates
@@ -26,6 +26,30 @@ _ADDR_RE = re.compile(r"0x[a-fA-F0-9]{40}")
 def _short_addr(a: str) -> str:
     a = a.lower()
     return f"{a[:6]}…{a[-4:]}"
+
+
+def _fmt_number(val: str | float) -> str:
+    """Format number with thousand separators."""
+    try:
+        num = float(val)
+        if abs(num) >= 1_000_000:
+            return f"{num:,.2f}"
+        elif abs(num) >= 1_000:
+            return f"{num:,.2f}"
+        else:
+            return f"{num:.2f}"
+    except (ValueError, TypeError):
+        return str(val)
+
+
+def _format_timestamp(ts_ms: int) -> str:
+    """Format timestamp from milliseconds to human-readable."""
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, OSError):
+        return "???"
 
 
 @router.message(F.text == "/start")
@@ -101,6 +125,13 @@ async def back(call: CallbackQuery, db: Database) -> None:
 
 @router.callback_query(F.data == "menu:traders")
 async def traders_menu(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    await _edit_traders_list(call, db, hl)
+    await call.answer()
+
+
+@router.callback_query(F.data == "traders:list")
+async def traders_list_callback(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Return to traders list."""
     await _edit_traders_list(call, db, hl)
     await call.answer()
 
@@ -185,8 +216,83 @@ async def traders_list(call: CallbackQuery, db: Database, hl: HyperliquidClient)
     await call.answer()
 
 
+@router.callback_query(F.data.startswith("traders:view:"))
+async def traders_view(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Show detailed trader card with live data."""
+    tg = call.from_user
+    if tg is None:
+        return
+
+    trader_id = int(call.data.split(":")[-1])
+    await _show_trader_details(call, db, hl, trader_id, edit=True)
+
+
+@router.callback_query(F.data.startswith("traders:refresh:"))
+async def traders_refresh(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Refresh trader details."""
+    tg = call.from_user
+    if tg is None:
+        return
+
+    trader_id = int(call.data.split(":")[-1])
+    await call.answer("Обновляю...")
+    await _show_trader_details(call, db, hl, trader_id, edit=True)
+
+
+@router.callback_query(F.data.startswith("traders:history:"))
+async def traders_history(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Show deposit/withdrawal history."""
+    tg = call.from_user
+    if tg is None:
+        return
+
+    trader_id = int(call.data.split(":")[-1])
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        traders_repo = TraderRepository(session)
+        
+        user = await users.get_by_telegram_id(tg.id)
+        if user is None or user.status != UserStatus.approved:
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        
+        # Find trader
+        user_traders = await traders_repo.list_user_traders(user)
+        trader = next((t for t in user_traders if t.id == trader_id), None)
+        if trader is None:
+            await call.answer("Трейдер не найден", show_alert=True)
+            return
+    
+    await call.answer("Загружаю историю...")
+    
+    # Fetch fresh ledger updates (deposits/withdrawals)
+    ledger_updates = await hl.user_non_funding_ledger_updates(trader.address, limit=20)
+    
+    if not ledger_updates:
+        text = f"📊 История: {_short_addr(trader.address)}\n\nИстория пуста."
+    else:
+        text = f"📊 История: {_short_addr(trader.address)}\n\n"
+        for upd in ledger_updates[:10]:  # Last 10 entries
+            delta = upd.get("delta", {})
+            usd_delta = delta.get("total", "0")
+            timestamp = upd.get("time", 0)
+            dt_str = _format_timestamp(timestamp)
+            
+            if float(usd_delta) > 0:
+                text += f"✅ Депозит: +${_fmt_number(usd_delta)} ({dt_str})\n"
+            else:
+                text += f"❌ Вывод: ${_fmt_number(usd_delta)} ({dt_str})\n"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="« Назад", callback_data=f"traders:view:{trader_id}")]
+    ])
+    await call.message.edit_text(text, reply_markup=kb)
+
+
 @router.callback_query(F.data.startswith("traders:remove:"))
 async def traders_remove(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Remove trader from user's list."""
     tg = call.from_user
     if tg is None:
         return
@@ -206,6 +312,87 @@ async def traders_remove(call: CallbackQuery, db: Database, hl: HyperliquidClien
 
     await call.answer("Удалено")
     await _edit_traders_list(call, db, hl)
+
+
+async def _show_trader_details(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, edit: bool = True) -> None:
+    """Show detailed trader information with live data."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        traders_repo = TraderRepository(session)
+        
+        user = await users.get_by_telegram_id(tg.id)
+        if user is None or user.status != UserStatus.approved:
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        
+        # Find trader
+        user_traders = await traders_repo.list_user_traders(user)
+        trader = next((t for t in user_traders if t.id == trader_id), None)
+        if trader is None:
+            await call.answer("Трейдер не найден", show_alert=True)
+            return
+    
+    # Fetch fresh data from Hyperliquid API
+    try:
+        user_state = await hl.user_state(trader.address)
+    except Exception as e:
+        logger.error(f"Failed to fetch trader state: {e}", exc_info=True)
+        await call.answer("Ошибка получения данных", show_alert=True)
+        return
+    
+    # Parse data
+    margin_summary = user_state.get("marginSummary", {})
+    account_value = margin_summary.get("accountValue", "0")
+    total_ntl_pos = margin_summary.get("totalNtlPos", "0")
+    total_raw_usd = margin_summary.get("totalRawUsd", "0")
+    
+    # Calculate PnL
+    pnl = float(total_raw_usd) - float(total_ntl_pos) if total_ntl_pos != "0" else 0
+    pnl_percent = (pnl / float(total_ntl_pos) * 100) if float(total_ntl_pos) > 0 else 0
+    
+    # Positions
+    positions = user_state.get("assetPositions", [])
+    
+    # Format message
+    text = f"📊 Трейдер: `{trader.address}`\n\n"
+    text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
+    
+    pnl_emoji = "📈" if pnl >= 0 else "📉"
+    pnl_sign = "+" if pnl >= 0 else ""
+    text += f"{pnl_emoji} **PnL:** {pnl_sign}${_fmt_number(str(pnl))} ({pnl_sign}{pnl_percent:.2f}%)\n\n"
+    
+    if positions:
+        text += "**🔹 Открытые позиции:**\n\n"
+        for pos in positions:
+            position = pos.get("position", {})
+            coin = position.get("coin", "???")
+            szi = position.get("szi", "0")
+            entry_px = position.get("entryPx", "0")
+            leverage_val = position.get("leverage", {}).get("value", 1)
+            unrealized_pnl = position.get("unrealizedPnl", "0")
+            
+            side = "🟢 LONG" if float(szi) > 0 else "🔴 SHORT"
+            size_abs = abs(float(szi))
+            
+            text += f"{side} **{coin}**\n"
+            text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
+            text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
+            text += f"  ├ Плечо: {leverage_val}x\n"
+            upnl_sign = "+" if float(unrealized_pnl) >= 0 else ""
+            text += f"  └ PnL: {upnl_sign}${_fmt_number(unrealized_pnl)}\n\n"
+    else:
+        text += "📭 Нет открытых позиций\n"
+    
+    from app.bot.keyboards import trader_detail_kb
+    
+    if edit:
+        await call.message.edit_text(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
+    else:
+        await call.message.answer(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
 
 
 async def _send_traders_list(message: Message, db: Database, hl: HyperliquidClient) -> None:
