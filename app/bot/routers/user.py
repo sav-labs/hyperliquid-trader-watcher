@@ -373,6 +373,11 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     
     # Parse data
     margin_summary = user_state.get("marginSummary", {})
+    
+    # Debug: log margin summary to understand available fields
+    logger.info(f"Margin summary keys: {list(margin_summary.keys())}")
+    logger.info(f"Margin summary: {margin_summary}")
+    
     account_value = margin_summary.get("accountValue", "0")
     total_ntl_pos = margin_summary.get("totalNtlPos", "0")
     
@@ -389,10 +394,18 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
         except (ValueError, TypeError):
             pass
     
-    # Calculate PnL percentage based on total position value
+    # Calculate ROE (Return On Equity) - percentage based on account value
+    # This shows the real return considering leverage
     pnl_percent = 0.0
-    if float(total_ntl_pos) > 0:
-        pnl_percent = (unrealized_pnl / float(total_ntl_pos)) * 100
+    acct_val_float = float(account_value)
+    if acct_val_float > 0:
+        # Account value already includes unrealized PnL, so we calculate from equity before PnL
+        equity_before_pnl = acct_val_float - unrealized_pnl
+        if equity_before_pnl > 0:
+            pnl_percent = (unrealized_pnl / equity_before_pnl) * 100
+        else:
+            # Fallback to account value if calculation fails
+            pnl_percent = (unrealized_pnl / acct_val_float) * 100
     
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
