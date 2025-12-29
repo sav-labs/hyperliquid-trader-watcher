@@ -391,25 +391,29 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     for pos in positions:
         position = pos.get("position", {})
         upnl = position.get("unrealizedPnl", "0")
-        try:
-            unrealized_pnl += float(upnl)
-        except (ValueError, TypeError):
-            pass
-        
-        # Calculate margin used for this position
-        # Margin Used = Position Value / Leverage
         szi = position.get("szi", "0")
         entry_px = position.get("entryPx", "0")
         leverage_info = position.get("leverage", {})
         leverage_val = leverage_info.get("value", 1) if isinstance(leverage_info, dict) else 1
         
         try:
-            size = abs(float(szi))
-            price = float(entry_px)
+            upnl_float = float(upnl)
+            unrealized_pnl += upnl_float
+            
+            size = float(szi)
+            entry_price = float(entry_px)
             leverage = float(leverage_val)
             
-            if leverage > 0:
-                position_value = size * price
+            # Calculate current price from unrealized PnL
+            # Current Price = Entry Price + (Unrealized PnL / Size)
+            if size != 0:
+                current_price = entry_price + (upnl_float / size)
+            else:
+                current_price = entry_price
+            
+            # Calculate margin used based on CURRENT price
+            if leverage > 0 and current_price > 0:
+                position_value = abs(size) * current_price
                 margin_used = position_value / leverage
                 total_margin_used += margin_used
         except (ValueError, TypeError, ZeroDivisionError):
@@ -431,7 +435,6 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
     text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
-    text += f"💳 **Использовано маржи:** ${_fmt_number(str(total_margin_used))}\n"
     
     pnl_emoji = "📈" if unrealized_pnl >= 0 else "📉"
     pnl_sign = "+" if unrealized_pnl >= 0 else "-"
@@ -454,14 +457,23 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             upnl_float = float(unrealized_pnl)
             position_roe = 0.0
             margin_used_pos = 0.0
+            current_price = 0.0
             
             try:
                 size = float(szi) if szi else 0
-                price = float(entry_px) if entry_px else 0
+                entry_price = float(entry_px) if entry_px else 0
                 lev = float(leverage_val) if leverage_val else 1
                 
-                if lev > 0 and price > 0:
-                    position_value = abs(size) * price
+                # Calculate current price from entry price and unrealized PnL
+                # Current Price = Entry Price + (Unrealized PnL / Size)
+                if size != 0:
+                    current_price = entry_price + (upnl_float / size)
+                else:
+                    current_price = entry_price
+                
+                # Calculate margin used based on CURRENT price (not entry price!)
+                if lev > 0 and current_price > 0:
+                    position_value = abs(size) * current_price
                     margin_used_pos = position_value / lev
                     if margin_used_pos > 0:
                         position_roe = (upnl_float / margin_used_pos) * 100
@@ -471,6 +483,8 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
             text += f"{side} **{coin}**\n"
             text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
             text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
+            if current_price > 0:
+                text += f"  ├ Текущая цена: ${_fmt_number(str(current_price))}\n"
             text += f"  ├ Плечо: {leverage_val}x\n"
             text += f"  ├ Маржа: ${_fmt_number(str(margin_used_pos))}\n"
             upnl_sign = "+" if upnl_float >= 0 else "-"
