@@ -43,11 +43,15 @@ class HyperliquidClient:
         
         def _call_spot() -> dict[str, Any]:
             return self._info.spot_user_state(addr)
+        
+        def _call_spot_meta() -> dict[str, Any]:
+            return self._info.spot_meta_and_asset_ctxs()
 
-        # Fetch both Perp and Spot data in parallel
-        raw, spot_raw = await asyncio.gather(
+        # Fetch Perp, Spot, and Spot prices in parallel
+        raw, spot_raw, spot_meta = await asyncio.gather(
             asyncio.to_thread(_call_perp),
-            asyncio.to_thread(_call_spot)
+            asyncio.to_thread(_call_spot),
+            asyncio.to_thread(_call_spot_meta)
         )
         
         # DEBUG: Log full structure to understand API response
@@ -106,27 +110,76 @@ class HyperliquidClient:
                 pass
         
         # Extract Spot balance from spot_user_state API response
-        # spot_raw format: {"balances": [{"coin": "USDC", "hold": "123.45", "total": "123.45"}, ...]}
-        spot_balance_total = 0.0
+        # spot_raw format: {"balances": [{"coin": "USDC", "total": "123.45", ...}, ...]}
+        # spot_meta format: [{"name": "USDC", "tokens": [0], "index": 0, "isCanonical": true, ...}, ...]
+        
+        # Build price map: token_id -> current price in USD
+        spot_price_map: dict[int, float] = {}
+        
+        if isinstance(spot_meta, list):
+            for token_info in spot_meta:
+                # spot_meta has "tokens" array with token IDs and "midPx" for current price
+                # But we need to use all_mids() for spot prices
+                pass
+        
+        # Actually, let's use the simpler approach: spot_meta_and_asset_ctxs returns prices
+        # in the asset contexts. Let's extract them.
+        if isinstance(spot_meta, list):
+            logger.debug(f"[DEBUG] Spot meta: {len(spot_meta)} tokens")
+            for item in spot_meta:
+                if isinstance(item, dict):
+                    tokens = item.get("tokens", [])
+                    if isinstance(tokens, list) and len(tokens) > 0:
+                        token_id = tokens[0]
+                        # Check if there's a midPx or we need to get it differently
+                        # For now, let's log the structure
+                        logger.debug(f"[DEBUG] Spot meta item keys: {list(item.keys())}")
+                        break
+        
+        # Get mid prices for spot tokens
+        def _call_all_mids() -> dict[str, str]:
+            return self._info.all_mids()
+        
+        all_mids = await asyncio.to_thread(_call_all_mids)
+        logger.debug(f"[DEBUG] all_mids keys sample: {list(all_mids.keys())[:5] if all_mids else 'empty'}")
+        
+        spot_balance_total_usd = 0.0
         
         if "balances" in spot_raw and isinstance(spot_raw["balances"], list):
             logger.debug(f"[DEBUG] Found {len(spot_raw['balances'])} spot balances")
             for balance in spot_raw["balances"]:
                 coin = balance.get("coin", "unknown")
-                total = balance.get("total", "0")
+                total_tokens = balance.get("total", "0")
+                
                 try:
-                    total_float = float(total)
-                    spot_balance_total += total_float
-                    if total_float > 0:
-                        logger.debug(f"  Spot {coin}: ${total_float:,.2f}")
-                except (ValueError, TypeError):
-                    pass
+                    token_amount = float(total_tokens)
+                    if token_amount <= 0:
+                        continue
+                    
+                    # Get current price from all_mids
+                    # all_mids returns {"BTC": "42000.5", "ETH": "2200.3", ...}
+                    # For spot tokens, the key might be the coin name
+                    price_str = all_mids.get(coin, "0")
+                    if not price_str or price_str == "0":
+                        # Try with @ prefix for spot tokens
+                        price_str = all_mids.get(f"@{coin}", "0")
+                    
+                    price = float(price_str) if price_str else 0.0
+                    
+                    if price > 0:
+                        token_value_usd = token_amount * price
+                        spot_balance_total_usd += token_value_usd
+                        logger.debug(f"  Spot {coin}: {token_amount:,.2f} tokens × ${price:,.2f} = ${token_value_usd:,.2f}")
+                    else:
+                        logger.debug(f"  Spot {coin}: {token_amount:,.2f} tokens (no price found)")
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"  Error parsing spot balance for {coin}: {e}")
         
-        if spot_balance_total > 0:
-            spot_value = str(spot_balance_total)
-            logger.info(f"Spot balance (from spot_user_state): ${spot_balance_total:,.2f}")
+        if spot_balance_total_usd > 0:
+            spot_value = str(spot_balance_total_usd)
+            logger.info(f"Spot balance (USD value): ${spot_balance_total_usd:,.2f}")
         else:
-            logger.debug("No Spot balances found in spot_user_state")
+            logger.debug("No Spot balances found or no prices available")
         
         # Calculate Total (Combined) = Perp + Spot
         if perp_value and spot_value:
