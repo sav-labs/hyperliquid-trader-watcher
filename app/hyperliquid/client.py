@@ -68,47 +68,33 @@ class HyperliquidClient:
             except (ValueError, TypeError):
                 pass
 
-        # Calculate Total Value (Combined: Perp + Spot)
+        # Calculate account value - use marginSummary.accountValue (Perp equity)
+        # Note: HyperDash "Total Value (Combined)" includes Perp + Spot, but API structure varies
+        # marginSummary.accountValue = Perp equity (cross + isolated)
+        # marginSummary.totalRawUsd = Total including all assets (may include extra isolated positions)
         account_value = None
         withdrawable = None
-        perp_value = 0.0
         
-        # Get Perp equity from marginSummary
+        # Get values from marginSummary (main account summary)
         ms = raw.get("marginSummary") or {}
-        if "accountValue" in ms:
+        
+        # Use accountValue from marginSummary (Perp equity)
+        perp_account_value = ms.get("accountValue")
+        if perp_account_value:
             try:
-                perp_value = float(ms.get("accountValue", 0))
+                account_value = str(float(perp_account_value))
+                logger.debug(f"Using marginSummary.accountValue (Perp equity): {account_value}")
             except (ValueError, TypeError):
                 pass
         
-        # Get Spot balances - look at withdrawable at root level
-        # withdrawable typically includes all available funds (Perp + Spot)
+        # Get withdrawable from root level (most accurate - includes all available funds)
         root_withdrawable = raw.get("withdrawable")
-        
-        # Try crossMarginSummary first (most accurate for Combined)
-        cross_ms = raw.get("crossMarginSummary") or {}
-        if "accountValue" in cross_ms:
-            account_value = str(cross_ms.get("accountValue"))
-            withdrawable = str(root_withdrawable or cross_ms.get("withdrawable", "0"))
-            logger.debug(f"Using crossMarginSummary.accountValue: {account_value}")
+        if root_withdrawable:
+            withdrawable = str(root_withdrawable)
+            logger.debug(f"Using root withdrawable: {withdrawable}")
         else:
-            # Calculate total manually: Try to get total from root withdrawable + unrealized PnL
-            # Or use totalRawUsd if available
-            total_raw_usd = ms.get("totalRawUsd")
-            if total_raw_usd:
-                try:
-                    account_value = str(float(total_raw_usd))
-                    logger.debug(f"Using marginSummary.totalRawUsd: {account_value}")
-                except (ValueError, TypeError):
-                    pass
-            
-            # If still no account_value, fallback to perp only
-            if not account_value and perp_value > 0:
-                account_value = str(perp_value)
-                logger.warning(f"Using marginSummary.accountValue (Perp only): {account_value}")
-            
-            # Use root withdrawable if available
-            withdrawable = str(root_withdrawable or ms.get("withdrawable", "0"))
+            withdrawable = str(ms.get("withdrawable", "0"))
+            logger.debug(f"Using marginSummary.withdrawable: {withdrawable}")
         
         logger.debug(f"[DEBUG] Final values: account_value={account_value}, withdrawable={withdrawable}, total_position_value={total_position_value}")
 
