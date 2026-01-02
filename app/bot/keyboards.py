@@ -14,6 +14,36 @@ def _fmt_balance(value: str | None) -> str | None:
         return value
 
 
+def _fmt_compact(value: str | float | None) -> str:
+    """
+    Compact number formatting for inline buttons:
+    - < 1000: just number (e.g. "123")
+    - >= 1000: with k suffix (e.g. "65k")
+    - >= 1M: with m suffix (e.g. "1.2m")
+    - >= 1B: with b suffix (e.g. "1.5b")
+    """
+    if value is None:
+        return "0"
+    try:
+        v = float(value)
+        abs_v = abs(v)
+        
+        if abs_v >= 1_000_000_000:
+            # Billions
+            return f"{v / 1_000_000_000:.1f}b"
+        elif abs_v >= 1_000_000:
+            # Millions
+            return f"{v / 1_000_000:.1f}m"
+        elif abs_v >= 1_000:
+            # Thousands
+            return f"{v / 1_000:.0f}k"
+        else:
+            # Less than 1000
+            return f"{v:.0f}"
+    except (ValueError, TypeError):
+        return str(value)
+
+
 def main_menu_kb(is_admin: bool) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="Трейдеры", callback_data="menu:traders")]
@@ -65,10 +95,10 @@ def trader_detail_kb(trader_id: int, positions: list[dict] | None = None) -> Inl
             pnl = pos.get("unrealized_pnl", 0.0)
             pos_value = pos.get("position_value", 0.0)
             
-            # Format button label: "BTC 🔴 SHORT | +$1,234 | $10,000"
+            # Format button label: "BTC 🔴 SHORT | +$65k | $4.8m"
             pnl_sign = "+" if pnl >= 0 else ""
-            pnl_str = f"{pnl_sign}${_fmt_balance(str(abs(pnl)))}"
-            pos_val_str = f"${_fmt_balance(str(pos_value))}"
+            pnl_str = f"{pnl_sign}${_fmt_compact(abs(pnl))}"
+            pos_val_str = f"${_fmt_compact(pos_value)}"
             
             label = f"{coin} {side} | {pnl_str} | {pos_val_str}"
             rows.append([InlineKeyboardButton(text=label, callback_data=f"traders:position:{trader_id}:{coin}")])
