@@ -65,7 +65,7 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         # Auto-approve and set admin flag for admins
         if tg.id in settings.bot_admins:
             if not user.is_admin:
-            user.is_admin = True
+                user.is_admin = True
             if user.status != UserStatus.approved:
                 user.status = UserStatus.approved
 
