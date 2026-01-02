@@ -372,10 +372,21 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     user_state = snapshot.user_state
     
     # Parse data
-    margin_summary = user_state.get("marginSummary", {})
-    account_value = margin_summary.get("accountValue", "0")
+    account_value = snapshot.account_value or "0"
+    withdrawable = snapshot.withdrawable or "0"
+    total_position_value = snapshot.total_position_value
+    
+    # Calculate leverage: totalPositionValue / accountValue
+    leverage_multiplier = 0.0
+    try:
+        account_value_float = float(account_value)
+        if account_value_float > 0 and total_position_value > 0:
+            leverage_multiplier = total_position_value / account_value_float
+    except (ValueError, TypeError, ZeroDivisionError):
+        pass
     
     # Use totalMarginUsed from API if available (more accurate)
+    margin_summary = user_state.get("marginSummary", {}) or user_state.get("crossMarginSummary", {})
     total_margin_used_from_api = margin_summary.get("totalMarginUsed", None)
     
     # Positions
@@ -438,6 +449,20 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     # Format message
     text = f"📊 Трейдер: `{trader.address}`\n\n"
     text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
+    
+    # Withdrawable amount
+    try:
+        withdrawable_float = float(withdrawable)
+        withdrawable_percent = (withdrawable_float / float(account_value) * 100) if float(account_value) > 0 else 0
+        text += f"💵 **Withdrawable:** ${_fmt_number(withdrawable)} ({withdrawable_percent:.1f}%)\n"
+    except (ValueError, TypeError, ZeroDivisionError):
+        text += f"💵 **Withdrawable:** ${_fmt_number(withdrawable)}\n"
+    
+    # Leverage
+    if leverage_multiplier > 0:
+        text += f"📊 **Leverage:** {leverage_multiplier:.2f}x (${_fmt_number(str(total_position_value))})\n"
+    else:
+        text += f"📊 **Leverage:** 0x (нет позиций)\n"
     
     pnl_emoji = "📈" if unrealized_pnl >= 0 else "📉"
     pnl_sign = "+" if unrealized_pnl >= 0 else "-"

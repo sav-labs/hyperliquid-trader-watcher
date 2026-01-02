@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     hl_poll_interval_seconds: int = Field(default=10, alias="HL_POLL_INTERVAL_SECONDS", ge=2, le=3600)
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO", alias="LOG_LEVEL")
+    max_log_files: int = Field(default=50, alias="MAX_LOG_FILES", ge=1, le=500)
 
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
     db_path: Path = Field(default=Path("./data/db/app.sqlite3"), alias="DB_PATH")

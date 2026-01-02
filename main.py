@@ -16,7 +16,7 @@ from settings import Settings
 
 async def main() -> None:
     settings = Settings()
-    setup_logging(settings.log_level, settings.log_dir)
+    setup_logging(settings.log_level, settings.log_dir, settings.max_log_files)
 
     db = Database(db_path=settings.db_path)
     await db.init()

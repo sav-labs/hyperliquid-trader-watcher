@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class HyperliquidUserSnapshot:
     user_state: dict[str, Any]
-    account_value: str | None
+    account_value: str | None  # Total account value (Combined: Perp + Spot)
+    withdrawable: str | None   # Amount available for withdrawal
+    total_position_value: float  # Total notional value of all positions (for leverage calc)
     positions: dict[str, dict[str, Any]]  # coin -> position dict (normalized)
 
 
@@ -38,19 +40,45 @@ class HyperliquidClient:
 
         raw = await asyncio.to_thread(_call)
         positions: dict[str, dict[str, Any]] = {}
+        total_position_value = 0.0
+        
         for ap in raw.get("assetPositions", []) or []:
             p = ap.get("position") or {}
             coin = p.get("coin")
             if not coin:
                 continue
             positions[str(coin)] = p
+            
+            # Calculate total position value (notional)
+            try:
+                position_value = abs(float(p.get("positionValue", 0)))
+                total_position_value += position_value
+            except (ValueError, TypeError):
+                pass
 
+        # Extract account value: try crossMarginSummary first (total), then marginSummary (perp only)
         account_value = None
-        ms = raw.get("marginSummary") or {}
-        if "accountValue" in ms:
-            account_value = str(ms.get("accountValue"))
+        withdrawable = None
+        
+        cross_ms = raw.get("crossMarginSummary") or {}
+        if "accountValue" in cross_ms:
+            # crossMarginSummary has the total (Combined: Perp + Spot)
+            account_value = str(cross_ms.get("accountValue"))
+            withdrawable = str(cross_ms.get("withdrawable", "0"))
+        else:
+            # Fallback to marginSummary (Perp only)
+            ms = raw.get("marginSummary") or {}
+            if "accountValue" in ms:
+                account_value = str(ms.get("accountValue"))
+            withdrawable = str(ms.get("withdrawable", "0"))
 
-        return HyperliquidUserSnapshot(user_state=raw, account_value=account_value, positions=positions)
+        return HyperliquidUserSnapshot(
+            user_state=raw,
+            account_value=account_value,
+            withdrawable=withdrawable,
+            total_position_value=total_position_value,
+            positions=positions,
+        )
 
     async def fetch_non_funding_ledger_updates(self, address: str, start_time_ms: int, end_time_ms: int | None = None) -> list[dict[str, Any]]:
         addr = address.lower()

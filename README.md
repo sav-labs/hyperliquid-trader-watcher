@@ -76,10 +76,40 @@ docker logs -f hyperliquid-trader-watcher
 
 - **BOT_TOKEN**: токен Telegram-бота
 - **BOT_ADMINS**: Telegram user ids админов (через запятую)
-- **HL_POLL_INTERVAL_SECONDS**: частота опроса Hyperliquid
-- **LOG_LEVEL**: `DEBUG` или `INFO`
+- **HL_POLL_INTERVAL_SECONDS**: частота опроса Hyperliquid (по умолчанию 10 секунд)
+- **LOG_LEVEL**: `DEBUG` или `INFO` (по умолчанию `INFO`)
+- **MAX_LOG_FILES**: количество хранимых файлов логов (по умолчанию 50)
 - **DB_PATH**: путь к sqlite БД (по умолчанию `./data/db/app.sqlite3`)
 - **LOG_DIR**: директория логов (по умолчанию `./data/logs`)
+
+## Логирование
+
+Каждый запуск бота создаёт **новый файл лога** с timestamp:
+
+```
+./data/logs/
+├── app_2026-01-02_14-30-45.log  # Запуск 1
+├── app_2026-01-02_15-20-10.log  # Запуск 2
+├── app_2026-01-03_09-15-33.log  # Запуск 3
+└── app_latest.log -> app_2026-01-03_09-15-33.log  # Symlink на последний
+```
+
+**Преимущества:**
+- Легко находить логи конкретного запуска
+- Автоматическая очистка старых логов (хранится последние 50 по умолчанию)
+- Symlink `app_latest.log` всегда указывает на текущий лог
+
+**Получить лог для анализа:**
+```bash
+# Последний запуск
+cat data/logs/app_latest.log
+
+# Конкретный запуск
+cat data/logs/app_2026-01-02_14-30-45.log
+
+# Список всех логов
+ls -lht data/logs/app_*.log
+```
 
 ## Как пользоваться
 
