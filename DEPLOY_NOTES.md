@@ -10,7 +10,12 @@
    • Spot: $7.8M
 ```
 
-Бот теперь автоматически определяет Spot балансы из API и показывает Total = Perp + Spot.
+**Исправлено получение Spot балансов:**
+- Теперь используем `spot_user_state()` API для получения Spot holdings
+- Раньше пытались найти Spot в обычном `user_state()`, но его там нет
+- Total (Combined) = Perp (marginSummary) + Spot (spot_user_state)
+
+**Commit:** `beedee0` - Fix: Use spot_user_state API to get Spot balances
 
 ## Обновление на сервере
 
