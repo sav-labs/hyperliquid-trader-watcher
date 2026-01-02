@@ -35,9 +35,12 @@
   - Сортировка по убыванию (самые большие сверху)
   - По умолчанию: сортировка по Position Value
 - При нажатии на позицию - детальный просмотр со всеми метриками:
-  - Size, Position Value, Entry/Current Price
-  - Leverage, Margin Used, Liquidation Price
-  - Unrealized PnL и ROE
+  - **Position Value / Size** - объединенная секция как на HyperDash:
+    - Первая строка: Position Value в USD
+    - Вторая строка: Размер с тикером (например, "1,577.76 ETH")
+  - **Цены**: Входная, Текущая, Ликвидации
+  - **Плечо и маржа**: Leverage и использованная маржа
+  - **PnL**: Unrealized PnL и ROE в %
   - **Исторические сделки (fills)** - последние 5 сделок по позиции
 - Кнопка "Назад к трейдеру" для возврата к общему обзору
 
@@ -48,6 +51,7 @@
 - `6cec96b` - feat: Redesign position display with inline buttons and detailed view
 - `0623bda` - feat: Add compact number formatting for position buttons
 - `1bb7286` - feat: Add position sorting by PnL and Position Value
+- `405ffdc` - feat: Improve position detail layout - combine Position Value and Size
 
 ## Обновление на сервере
 
