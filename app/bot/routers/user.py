@@ -552,6 +552,24 @@ async def _show_position_fills(call: CallbackQuery, db: Database, hl: Hyperliqui
     
     await call.answer("Загружаю историю сделок...")
     
+    # Fetch current position to determine side
+    try:
+        snapshot = await hl.fetch_user_state(trader.address)
+        positions = snapshot.user_state.get("assetPositions", [])
+        position_data = None
+        for pos in positions:
+            p = pos.get("position", {})
+            if p.get("coin") == coin:
+                position_data = p
+                break
+        
+        position_side = None
+        if position_data:
+            szi = position_data.get("szi", "0")
+            position_side = "LONG" if float(szi) > 0 else "SHORT"
+    except Exception:
+        position_side = None
+    
     # Fetch ALL fills for this coin (no limit)
     try:
         fills = await hl.fetch_user_fills(trader.address, coin, limit=1000)
@@ -566,7 +584,19 @@ async def _show_position_fills(call: CallbackQuery, db: Database, hl: Hyperliqui
     else:
         text = f"📜 **История сделок: {coin}**\n\n"
         text += f"_История исполненных ордеров по этой позиции_\n\n"
-        text += f"📊 Всего сделок: **{len(fills)}**\n\n"
+        text += f"📊 Всего сделок: **{len(fills)}**\n"
+        
+        # Add explanation based on position side
+        if position_side == "SHORT":
+            text += f"🔴 Текущая позиция: **SHORT**\n"
+            text += f"_• SELL = открытие/увеличение SHORT_\n"
+            text += f"_• BUY = закрытие/уменьшение SHORT_\n\n"
+        elif position_side == "LONG":
+            text += f"🟢 Текущая позиция: **LONG**\n"
+            text += f"_• BUY = открытие/увеличение LONG_\n"
+            text += f"_• SELL = закрытие/уменьшение LONG_\n\n"
+        else:
+            text += "\n"
         
         # Show all fills with detailed info
         for fill in fills:
