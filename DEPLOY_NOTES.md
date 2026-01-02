@@ -11,11 +11,14 @@
 ```
 
 **Исправлено получение Spot балансов:**
-- Теперь используем `spot_user_state()` API для получения Spot holdings
-- Раньше пытались найти Spot в обычном `user_state()`, но его там нет
-- Total (Combined) = Perp (marginSummary) + Spot (spot_user_state)
+- Используем `spot_user_state()` для получения токенов + `all_mids()` для цен
+- `spot_user_state()` возвращает **количество токенов**, а не USD!
+- Расчет: `token_amount × current_price = USD value`
+- Total (Combined) = Perp (marginSummary) + Spot (tokens × prices)
 
-**Commit:** `beedee0` - Fix: Use spot_user_state API to get Spot balances
+**Commits:** 
+- `beedee0` - Fix: Use spot_user_state API to get Spot balances
+- `85052e0` - Fix: Calculate Spot balance in USD using token prices
 
 ## Обновление на сервере
 
