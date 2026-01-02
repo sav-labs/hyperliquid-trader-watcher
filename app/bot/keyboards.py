@@ -50,16 +50,48 @@ def traders_list_kb(traders: list[tuple[int, str, str | None]]) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def trader_detail_kb(trader_id: int) -> InlineKeyboardMarkup:
+def trader_detail_kb(trader_id: int, positions: list[dict] | None = None) -> InlineKeyboardMarkup:
     """
-    Keyboard for trader detail card.
+    Keyboard for trader detail card with position list.
+    positions: list of dicts with keys: coin, side, unrealized_pnl, position_value
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    
+    # Add position buttons if any
+    if positions:
+        for pos in positions:
+            coin = pos.get("coin", "???")
+            side = pos.get("side", "")  # "🟢 LONG" or "🔴 SHORT"
+            pnl = pos.get("unrealized_pnl", 0.0)
+            pos_value = pos.get("position_value", 0.0)
+            
+            # Format button label: "BTC 🔴 SHORT | +$1,234 | $10,000"
+            pnl_sign = "+" if pnl >= 0 else ""
+            pnl_str = f"{pnl_sign}${_fmt_balance(str(abs(pnl)))}"
+            pos_val_str = f"${_fmt_balance(str(pos_value))}"
+            
+            label = f"{coin} {side} | {pnl_str} | {pos_val_str}"
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"traders:position:{trader_id}:{coin}")])
+    
+    # Standard action buttons
+    rows.extend([
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"traders:refresh:{trader_id}")],
+        [InlineKeyboardButton(text="💰 История депозитов/выводов", callback_data=f"traders:history:{trader_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить трейдера", callback_data=f"traders:remove:{trader_id}")],
+        [InlineKeyboardButton(text="« К списку", callback_data="traders:list")],
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def position_detail_kb(trader_id: int, coin: str) -> InlineKeyboardMarkup:
+    """
+    Keyboard for position detail view.
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"traders:refresh:{trader_id}")],
-            [InlineKeyboardButton(text="💰 История депозитов/выводов", callback_data=f"traders:history:{trader_id}")],
-            [InlineKeyboardButton(text="🗑 Удалить трейдера", callback_data=f"traders:remove:{trader_id}")],
-            [InlineKeyboardButton(text="« К списку", callback_data="traders:list")],
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"traders:position:{trader_id}:{coin}")],
+            [InlineKeyboardButton(text="« Назад к трейдеру", callback_data=f"traders:view:{trader_id}")],
         ]
     )
 

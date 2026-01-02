@@ -253,5 +253,30 @@ class HyperliquidClient:
         updates = await self.fetch_non_funding_ledger_updates(addr, start_time_ms, end_time_ms)
         # Return most recent first
         return sorted(updates, key=lambda x: x.get("time", 0), reverse=True)[:limit]
+    
+    async def fetch_user_fills(self, address: str, coin: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        """
+        Fetch recent fills (executed trades) for user.
+        If coin is specified, filters fills for that specific asset.
+        """
+        addr = address.lower()
+        
+        def _call_fills() -> list[dict[str, Any]]:
+            # user_fills returns fills for the user
+            # Can optionally filter by aggregateOnly, but we want all fills
+            result = self._info.user_fills(addr)
+            if isinstance(result, list):
+                return result
+            return []
+        
+        fills = await asyncio.to_thread(_call_fills)
+        
+        # Filter by coin if specified
+        if coin:
+            fills = [f for f in fills if f.get("coin") == coin]
+        
+        # Sort by time (most recent first) and limit
+        fills_sorted = sorted(fills, key=lambda x: x.get("time", 0), reverse=True)
+        return fills_sorted[:limit]
 
 

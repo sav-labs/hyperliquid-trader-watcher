@@ -343,6 +343,172 @@ async def traders_remove(call: CallbackQuery, db: Database, hl: HyperliquidClien
     await _edit_traders_list(call, db, hl)
 
 
+@router.callback_query(F.data.startswith("traders:position:"))
+async def traders_position(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Show detailed position information."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    # Parse callback data: traders:position:{trader_id}:{coin}
+    parts = call.data.split(":")
+    if len(parts) < 4:
+        await call.answer("Неверный формат", show_alert=True)
+        return
+    
+    trader_id = int(parts[2])
+    coin = parts[3]
+    
+    await _show_position_detail(call, db, hl, trader_id, coin)
+
+
+async def _show_position_detail(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, coin: str) -> None:
+    """Show detailed position information with history."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        traders_repo = TraderRepository(session)
+        
+        user = await users.get_by_telegram_id(tg.id)
+        if user is None or user.status != UserStatus.approved:
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        
+        # Find trader
+        user_traders = await traders_repo.list_user_traders(user)
+        trader = next((t for t in user_traders if t.id == trader_id), None)
+        if trader is None:
+            await call.answer("Трейдер не найден", show_alert=True)
+            return
+    
+    # Fetch current state
+    try:
+        snapshot = await hl.fetch_user_state(trader.address)
+    except Exception:
+        logger.exception("Failed to fetch trader state")
+        await call.answer("Ошибка загрузки данных", show_alert=True)
+        return
+    
+    # Find position
+    user_state = snapshot.user_state
+    positions = user_state.get("assetPositions", [])
+    position_data = None
+    
+    for pos in positions:
+        p = pos.get("position", {})
+        if p.get("coin") == coin:
+            position_data = p
+            break
+    
+    if not position_data:
+        await call.answer(f"Позиция {coin} не найдена", show_alert=True)
+        return
+    
+    # Extract position details
+    szi = position_data.get("szi", "0")
+    entry_px = position_data.get("entryPx", "0")
+    leverage_info = position_data.get("leverage", {})
+    leverage_val = leverage_info.get("value", 1) if isinstance(leverage_info, dict) else 1
+    unrealized_pnl = position_data.get("unrealizedPnl", "0")
+    position_value_str = position_data.get("positionValue", "0")
+    liquidation_px = position_data.get("liquidationPx")
+    max_trade_szs = position_data.get("maxTradeSzs", [])
+    
+    # Calculate metrics
+    side = "🟢 LONG" if float(szi) > 0 else "🔴 SHORT"
+    size_abs = abs(float(szi))
+    upnl_float = float(unrealized_pnl)
+    position_value = abs(float(position_value_str))
+    
+    # Calculate current price and margin
+    current_price = 0.0
+    margin_used = 0.0
+    position_roe = 0.0
+    
+    try:
+        size = float(szi)
+        entry_price = float(entry_px)
+        lev = float(leverage_val)
+        
+        # Current Price = Entry Price + (Unrealized PnL / Size)
+        if size != 0:
+            current_price = entry_price + (upnl_float / size)
+        else:
+            current_price = entry_price
+        
+        # Margin used
+        if lev > 0 and current_price > 0:
+            calc_position_value = abs(size) * current_price
+            margin_used = calc_position_value / lev
+            if margin_used > 0:
+                position_roe = (upnl_float / margin_used) * 100
+    except (ValueError, TypeError, ZeroDivisionError):
+        pass
+    
+    # Format message
+    text = f"📊 **Позиция: {coin}**\n\n"
+    text += f"{side}\n\n"
+    
+    text += f"💰 **Основные метрики:**\n"
+    text += f"  • Размер: {_fmt_number(str(size_abs))} {coin}\n"
+    text += f"  • Position Value: ${_fmt_number(str(position_value))}\n"
+    text += f"  • Входная цена: ${_fmt_number(entry_px)}\n"
+    if current_price > 0:
+        text += f"  • Текущая цена: ${_fmt_number(str(current_price))}\n"
+    text += f"  • Плечо: {leverage_val}x\n"
+    text += f"  • Маржа использована: ${_fmt_number(str(margin_used))}\n"
+    
+    if liquidation_px:
+        text += f"  • Цена ликвидации: ${_fmt_number(str(liquidation_px))}\n"
+    
+    # PnL
+    upnl_sign = "+" if upnl_float >= 0 else ""
+    roe_sign = "+" if position_roe >= 0 else ""
+    pnl_emoji = "📈" if upnl_float >= 0 else "📉"
+    text += f"\n{pnl_emoji} **PnL:**\n"
+    text += f"  • Unrealized: {upnl_sign}${_fmt_number(str(abs(upnl_float)))}\n"
+    text += f"  • ROE: {roe_sign}{abs(position_roe):.2f}%\n"
+    
+    # Max trade sizes (if available)
+    if max_trade_szs:
+        text += f"\n📊 **Max Trade Sizes:**\n"
+        for mts in max_trade_szs[:3]:  # Show first 3
+            text += f"  • {_fmt_number(str(mts))} {coin}\n"
+    
+    # Try to fetch recent fills (historical data)
+    text += f"\n📜 **Недавние сделки:**\n"
+    try:
+        fills = await hl.fetch_user_fills(trader.address, coin)
+        if fills:
+            # Show last 5 fills
+            for fill in fills[:5]:
+                fill_time = _format_timestamp(fill.get("time", 0))
+                fill_px = fill.get("px", "0")
+                fill_sz = fill.get("sz", "0")
+                fill_side = fill.get("side", "")
+                fill_fee = fill.get("fee", "0")
+                
+                side_emoji = "🟢" if fill_side.upper() == "BUY" else "🔴"
+                text += f"  {side_emoji} {fill_side.upper()} {_fmt_number(fill_sz)} @ ${_fmt_number(fill_px)}\n"
+                text += f"    └ {fill_time} | Fee: ${_fmt_number(fill_fee)}\n"
+        else:
+            text += "  _Нет данных о сделках_\n"
+    except Exception as e:
+        logger.debug(f"Failed to fetch fills for {coin}: {e}")
+        text += "  _Не удалось загрузить историю_\n"
+    
+    from app.bot.keyboards import position_detail_kb
+    
+    try:
+        await call.message.edit_text(text, reply_markup=position_detail_kb(trader_id, coin), parse_mode="Markdown")
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
 async def _show_trader_details(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, edit: bool = True) -> None:
     """Show detailed trader information with live data."""
     tg = call.from_user
@@ -480,56 +646,48 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     pnl_sign = "+" if unrealized_pnl >= 0 else "-"
     text += f"{pnl_emoji} **Unrealized PnL:** {pnl_sign}${_fmt_number(str(abs(unrealized_pnl)))} ({pnl_sign}{abs(pnl_percent):.2f}%)\n\n"
     
+    # Prepare position list for inline buttons
+    position_buttons = []
     if positions:
-        text += "**🔹 Открытые позиции:**\n\n"
+        text += f"**🔹 Открытые позиции ({len(positions)}):**\n"
+        text += "_Нажмите на позицию для деталей_\n"
+        
         for pos in positions:
             position = pos.get("position", {})
             coin = position.get("coin", "???")
             szi = position.get("szi", "0")
             entry_px = position.get("entryPx", "0")
             leverage_val = position.get("leverage", {}).get("value", 1)
-            unrealized_pnl = position.get("unrealizedPnl", "0")
+            pos_unrealized_pnl = position.get("unrealizedPnl", "0")
             
             side = "🟢 LONG" if float(szi) > 0 else "🔴 SHORT"
-            size_abs = abs(float(szi))
             
-            # Calculate ROE and margin used for this position
-            upnl_float = float(unrealized_pnl)
-            position_roe = 0.0
-            margin_used_pos = 0.0
-            current_price = 0.0
+            # Calculate position value
+            upnl_float = float(pos_unrealized_pnl)
+            position_value = 0.0
             
             try:
                 size = float(szi) if szi else 0
                 entry_price = float(entry_px) if entry_px else 0
-                lev = float(leverage_val) if leverage_val else 1
                 
-                # Calculate current price from entry price and unrealized PnL
-                # Current Price = Entry Price + (Unrealized PnL / Size)
+                # Calculate current price
                 if size != 0:
                     current_price = entry_price + (upnl_float / size)
                 else:
                     current_price = entry_price
                 
-                # Calculate margin used based on CURRENT price (not entry price!)
-                if lev > 0 and current_price > 0:
+                # Position value in USD
+                if current_price > 0:
                     position_value = abs(size) * current_price
-                    margin_used_pos = position_value / lev
-                    if margin_used_pos > 0:
-                        position_roe = (upnl_float / margin_used_pos) * 100
             except (ValueError, TypeError, ZeroDivisionError):
                 pass
             
-            text += f"{side} **{coin}**\n"
-            text += f"  ├ Размер: {_fmt_number(str(size_abs))} {coin}\n"
-            text += f"  ├ Входная цена: ${_fmt_number(entry_px)}\n"
-            if current_price > 0:
-                text += f"  ├ Текущая цена: ${_fmt_number(str(current_price))}\n"
-            text += f"  ├ Плечо: {leverage_val}x\n"
-            text += f"  ├ Маржа: ${_fmt_number(str(margin_used_pos))}\n"
-            upnl_sign = "+" if upnl_float >= 0 else "-"
-            roe_sign = "+" if position_roe >= 0 else "-"
-            text += f"  └ PnL: {upnl_sign}${_fmt_number(str(abs(upnl_float)))} ({roe_sign}{abs(position_roe):.2f}%)\n\n"
+            position_buttons.append({
+                "coin": coin,
+                "side": side,
+                "unrealized_pnl": upnl_float,
+                "position_value": position_value,
+            })
     else:
         text += "📭 Нет открытых позиций\n"
     
@@ -537,13 +695,21 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     
     if edit:
         try:
-            await call.message.edit_text(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
+            await call.message.edit_text(
+                text, 
+                reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None), 
+                parse_mode="Markdown"
+            )
         except Exception as e:
             # If message not modified, just ignore
             if "message is not modified" not in str(e).lower():
                 raise
     else:
-        await call.message.answer(text, reply_markup=trader_detail_kb(trader_id), parse_mode="Markdown")
+        await call.message.answer(
+            text, 
+            reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None), 
+            parse_mode="Markdown"
+        )
 
 
 async def _send_traders_list(message: Message, db: Database, hl: HyperliquidClient) -> None:
