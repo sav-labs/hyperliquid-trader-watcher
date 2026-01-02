@@ -472,17 +472,19 @@ async def _show_position_detail(call: CallbackQuery, db: Database, hl: Hyperliqu
     text = f"📊 **Позиция: {coin}**\n\n"
     text += f"{side}\n\n"
     
-    text += f"💰 **Основные метрики:**\n"
-    text += f"  • Размер: {_fmt_number(str(size_abs))} {coin}\n"
-    text += f"  • Position Value: ${_fmt_number(str(position_value))}\n"
+    text += f"💰 **Position Value / Size:**\n"
+    text += f"  ${_fmt_number(str(position_value))}\n"
+    text += f"  {_fmt_number(str(size_abs))} {coin}\n\n"
+    text += f"📊 **Цены:**\n"
     text += f"  • Входная цена: ${_fmt_number(entry_px)}\n"
     if current_price > 0:
         text += f"  • Текущая цена: ${_fmt_number(str(current_price))}\n"
-    text += f"  • Плечо: {leverage_val}x\n"
-    text += f"  • Маржа использована: ${_fmt_number(str(margin_used))}\n"
-    
     if liquidation_px:
         text += f"  • Цена ликвидации: ${_fmt_number(str(liquidation_px))}\n"
+    
+    text += f"\n⚙️ **Плечо и маржа:**\n"
+    text += f"  • Плечо: {leverage_val}x\n"
+    text += f"  • Маржа использована: ${_fmt_number(str(margin_used))}\n"
     
     # PnL
     upnl_sign = "+" if upnl_float >= 0 else ""
