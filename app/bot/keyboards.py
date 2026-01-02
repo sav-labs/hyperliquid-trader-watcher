@@ -106,8 +106,8 @@ def trader_detail_kb(trader_id: int, positions: list[dict] | None = None, sort_b
             pnl = pos.get("unrealized_pnl", 0.0)
             pos_value = pos.get("position_value", 0.0)
             
-            # Format button label: "BTC 🔴 SHORT | +$65k | $4.8m"
-            pnl_sign = "+" if pnl >= 0 else ""
+            # Format button label: "BTC 🔴 SHORT | +$65k | $4.8m" or "LIT 🔴 SHORT | -$295k | $10.3m"
+            pnl_sign = "+" if pnl >= 0 else "-"
             pnl_str = f"{pnl_sign}${_fmt_compact(abs(pnl))}"
             pos_val_str = f"${_fmt_compact(pos_value)}"
             
