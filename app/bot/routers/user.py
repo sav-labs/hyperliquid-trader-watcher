@@ -65,7 +65,7 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         # Auto-approve and set admin flag for admins
         if tg.id in settings.bot_admins:
             if not user.is_admin:
-                user.is_admin = True
+            user.is_admin = True
             if user.status != UserStatus.approved:
                 user.status = UserStatus.approved
 
@@ -382,6 +382,25 @@ async def traders_position(call: CallbackQuery, db: Database, hl: HyperliquidCli
     await _show_position_detail(call, db, hl, trader_id, coin)
 
 
+@router.callback_query(F.data.startswith("traders:fills:"))
+async def traders_fills(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Show full trade history (fills) for a position."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    # Parse callback data: traders:fills:{trader_id}:{coin}
+    parts = call.data.split(":")
+    if len(parts) < 4:
+        await call.answer("Неверный формат", show_alert=True)
+        return
+    
+    trader_id = int(parts[2])
+    coin = parts[3]
+    
+    await _show_position_fills(call, db, hl, trader_id, coin)
+
+
 async def _show_position_detail(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, coin: str) -> None:
     """Show detailed position information with history."""
     tg = call.from_user
@@ -500,47 +519,94 @@ async def _show_position_detail(call: CallbackQuery, db: Database, hl: Hyperliqu
         for mts in max_trade_szs[:3]:  # Show first 3
             text += f"  • {_fmt_number(str(mts))} {coin}\n"
     
-    # Try to fetch recent fills (historical data)
-    text += f"\n📜 **Недавние сделки:**\n"
-    try:
-        fills = await hl.fetch_user_fills(trader.address, coin)
-        if fills:
-            # DEBUG: Log first fill to understand structure
-            if fills:
-                logger.debug(f"[DEBUG] First fill for {coin}: {fills[0]}")
-            
-            # Show last 5 fills
-            for fill in fills[:5]:
-                fill_time = _format_timestamp(fill.get("time", 0))
-                fill_px = fill.get("px", "0")
-                fill_sz = fill.get("sz", "0")
-                fill_side = fill.get("side", "")  # Can be "A" (ask/sell) or "B" (bid/buy)
-                fill_fee = fill.get("fee", "0")
-                
-                # Side determination: "A" = sell/short, "B" = buy/long
-                # Note: For a SHORT position, "B" means closing (buying back)
-                if fill_side == "B":
-                    side_emoji = "🟢"
-                    side_text = "BUY"
-                elif fill_side == "A":
-                    side_emoji = "🔴"
-                    side_text = "SELL"
-                else:
-                    side_emoji = "⚪️"
-                    side_text = fill_side
-                
-                text += f"  {side_emoji} {side_text} {_fmt_number(fill_sz)} @ ${_fmt_number(fill_px)}\n"
-                text += f"    └ {fill_time} | Fee: ${_fmt_number(fill_fee)}\n"
-        else:
-            text += "  _Нет данных о сделках_\n"
-    except Exception as e:
-        logger.debug(f"Failed to fetch fills for {coin}: {e}")
-        text += "  _Не удалось загрузить историю_\n"
-    
     from app.bot.keyboards import position_detail_kb
     
     try:
         await call.message.edit_text(text, reply_markup=position_detail_kb(trader_id, coin), parse_mode="Markdown")
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
+async def _show_position_fills(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, coin: str) -> None:
+    """Show full trade history (fills) for a position."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        traders_repo = TraderRepository(session)
+        
+        user = await users.get_by_telegram_id(tg.id)
+        if user is None or user.status != UserStatus.approved:
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        
+        # Find trader
+        user_traders = await traders_repo.list_user_traders(user)
+        trader = next((t for t in user_traders if t.id == trader_id), None)
+        if trader is None:
+            await call.answer("Трейдер не найден", show_alert=True)
+            return
+    
+    await call.answer("Загружаю историю сделок...")
+    
+    # Fetch ALL fills for this coin (no limit)
+    try:
+        fills = await hl.fetch_user_fills(trader.address, coin, limit=1000)
+    except Exception as e:
+        logger.error(f"Failed to fetch fills for {coin}: {e}", exc_info=True)
+        await call.answer("Ошибка получения данных", show_alert=True)
+        return
+    
+    if not fills:
+        text = f"📜 **История сделок: {coin}**\n\n"
+        text += "_Нет данных о сделках_\n"
+    else:
+        text = f"📜 **История сделок: {coin}**\n\n"
+        text += f"_История исполненных ордеров по этой позиции_\n\n"
+        text += f"📊 Всего сделок: **{len(fills)}**\n\n"
+        
+        # Show all fills with detailed info
+        for fill in fills:
+            fill_time = _format_timestamp(fill.get("time", 0))
+            fill_px = fill.get("px", "0")
+            fill_sz = fill.get("sz", "0")
+            fill_side = fill.get("side", "")
+            fill_fee = fill.get("fee", "0")
+            
+            # Side determination: "A" = sell/short, "B" = buy/long
+            if fill_side == "B":
+                side_emoji = "🟢"
+                side_text = "BUY"
+                action_text = "Куплено"
+            elif fill_side == "A":
+                side_emoji = "🔴"
+                side_text = "SELL"
+                action_text = "Продано"
+            else:
+                side_emoji = "⚪️"
+                side_text = fill_side
+                action_text = "Сделка"
+            
+            # Calculate total trade value
+            try:
+                trade_value = float(fill_sz) * float(fill_px)
+                trade_value_str = f"${_fmt_number(str(trade_value))}"
+            except (ValueError, TypeError):
+                trade_value_str = "???"
+            
+            text += f"{side_emoji} **{side_text}** {_fmt_number(fill_sz)} {coin}\n"
+            text += f"  • Цена: ${_fmt_number(fill_px)}\n"
+            text += f"  • Сумма: {trade_value_str}\n"
+            text += f"  • Комиссия: ${_fmt_number(fill_fee)}\n"
+            text += f"  • Время: {fill_time}\n\n"
+    
+    from app.bot.keyboards import position_fills_kb
+    
+    try:
+        await call.message.edit_text(text, reply_markup=position_fills_kb(trader_id, coin), parse_mode="Markdown")
     except Exception as e:
         if "message is not modified" not in str(e).lower():
             raise

@@ -132,7 +132,19 @@ def position_detail_kb(trader_id: int, coin: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"traders:position:{trader_id}:{coin}")],
+            [InlineKeyboardButton(text="📜 История сделок", callback_data=f"traders:fills:{trader_id}:{coin}")],
             [InlineKeyboardButton(text="« Назад к трейдеру", callback_data=f"traders:view:{trader_id}")],
+        ]
+    )
+
+
+def position_fills_kb(trader_id: int, coin: str) -> InlineKeyboardMarkup:
+    """
+    Keyboard for position fills (trade history) view.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="« Назад к позиции", callback_data=f"traders:position:{trader_id}:{coin}")],
         ]
     )
 
