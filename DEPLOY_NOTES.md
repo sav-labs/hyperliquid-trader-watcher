@@ -23,7 +23,12 @@
 
 **Новый UI для позиций:**
 - Позиции теперь отображаются как **inline кнопки** с кратким описанием
-- Формат кнопки: `BTC 🔴 SHORT | +$1,234 | $10,000`
+- Формат кнопки: `BTC 🔴 SHORT | +$65k | $4.8m` (компактные числа!)
+- **Компактное форматирование чисел в кнопках:**
+  - < 1000: просто число (123)
+  - Тысячи: 65k
+  - Миллионы: 1.2m
+  - Миллиарды: 1.5b
 - При нажатии на позицию - детальный просмотр со всеми метриками:
   - Size, Position Value, Entry/Current Price
   - Leverage, Margin Used, Liquidation Price
@@ -36,6 +41,7 @@
 - `85052e0` - Fix: Calculate Spot balance in USD using token prices
 - `3072f83` - Fix: Calculate Withdrawable % and Leverage from Perp equity
 - `6cec96b` - feat: Redesign position display with inline buttons and detailed view
+- `0623bda` - feat: Add compact number formatting for position buttons
 
 ## Обновление на сервере
 
