@@ -38,10 +38,17 @@ class HyperliquidClient:
     async def fetch_user_state(self, address: str) -> HyperliquidUserSnapshot:
         addr = address.lower()
 
-        def _call() -> dict[str, Any]:
+        def _call_perp() -> dict[str, Any]:
             return self._info.user_state(addr)
+        
+        def _call_spot() -> dict[str, Any]:
+            return self._info.spot_user_state(addr)
 
-        raw = await asyncio.to_thread(_call)
+        # Fetch both Perp and Spot data in parallel
+        raw, spot_raw = await asyncio.gather(
+            asyncio.to_thread(_call_perp),
+            asyncio.to_thread(_call_spot)
+        )
         
         # DEBUG: Log full structure to understand API response
         logger.debug(f"[DEBUG] user_state for {addr[:10]}...")
@@ -52,12 +59,13 @@ class HyperliquidClient:
             logger.debug(f"[DEBUG] crossMarginSummary: {json.dumps(raw['crossMarginSummary'], indent=2)}")
         logger.debug(f"[DEBUG] withdrawable (root): {raw.get('withdrawable', 'NOT FOUND')}")
         
-        # Log asset positions to find Spot balances
+        # Log asset positions
         asset_positions = raw.get("assetPositions", [])
-        logger.debug(f"[DEBUG] assetPositions count: {len(asset_positions)}")
+        logger.debug(f"[DEBUG] Perp assetPositions count: {len(asset_positions)}")
         
-        # Log ALL asset positions to understand structure
-        logger.debug(f"[DEBUG] ALL assetPositions: {json.dumps(asset_positions, indent=2)}")
+        # Log Spot data
+        logger.debug(f"[DEBUG] Spot data keys: {list(spot_raw.keys())}")
+        logger.debug(f"[DEBUG] Spot data: {json.dumps(spot_raw, indent=2)}")
         
         positions: dict[str, dict[str, Any]] = {}
         total_position_value = 0.0
@@ -97,111 +105,41 @@ class HyperliquidClient:
             except (ValueError, TypeError):
                 pass
         
-        # Try to get Spot balance using multiple methods
-        spot_candidates = []
+        # Extract Spot balance from spot_user_state API response
+        # spot_raw format: {"balances": [{"coin": "USDC", "hold": "123.45", "total": "123.45"}, ...]}
+        spot_balance_total = 0.0
         
-        # Method 1: Check if there's a spotMarginSummary
-        spot_ms = raw.get("spotMarginSummary") or {}
-        if spot_ms.get("accountValue"):
-            try:
-                val = float(spot_ms["accountValue"])
-                spot_candidates.append(("spotMarginSummary.accountValue", val))
-                logger.debug(f"Method 1 - spotMarginSummary.accountValue: ${val:,.2f}")
-            except (ValueError, TypeError):
-                pass
+        if "balances" in spot_raw and isinstance(spot_raw["balances"], list):
+            logger.debug(f"[DEBUG] Found {len(spot_raw['balances'])} spot balances")
+            for balance in spot_raw["balances"]:
+                coin = balance.get("coin", "unknown")
+                total = balance.get("total", "0")
+                try:
+                    total_float = float(total)
+                    spot_balance_total += total_float
+                    if total_float > 0:
+                        logger.debug(f"  Spot {coin}: ${total_float:,.2f}")
+                except (ValueError, TypeError):
+                    pass
         
-        # Method 2: Calculate from assetPositions - sum spot holdings
-        spot_balance_from_positions = 0.0
-        for ap in raw.get("assetPositions", []):
-            position = ap.get("position")
-            if not position:
-                continue
-            
-            coin = position.get("coin", "")
-            szi = position.get("szi", "0")
-            
-            # Skip perp positions (those with non-zero szi)
-            try:
-                if float(szi) != 0:
-                    continue
-            except (ValueError, TypeError):
-                continue
-            
-            # This might be a spot holding - look for balance fields
-            for key in ["balance", "total", "accountValue", "value"]:
-                if key in ap:
-                    try:
-                        spot_balance_from_positions += float(ap[key])
-                    except (ValueError, TypeError):
-                        pass
-        
-        if spot_balance_from_positions > 0:
-            spot_candidates.append(("assetPositions (zero szi)", spot_balance_from_positions))
-            logger.debug(f"Method 2 - Spot from assetPositions: ${spot_balance_from_positions:,.2f}")
-        
-        # Method 3: Try direct "spot" field if exists
-        if "spot" in raw:
-            try:
-                val = float(raw["spot"])
-                spot_candidates.append(("root.spot", val))
-                logger.debug(f"Method 3 - root.spot: ${val:,.2f}")
-            except (ValueError, TypeError):
-                pass
-        
-        # Method 4: Try spotValue field
-        if "spotValue" in raw:
-            try:
-                val = float(raw["spotValue"])
-                spot_candidates.append(("root.spotValue", val))
-                logger.debug(f"Method 4 - root.spotValue: ${val:,.2f}")
-            except (ValueError, TypeError):
-                pass
-        
-        # Method 5: Calculate as difference between totalRawUsd and perp positions
-        # totalRawUsd might include isolated positions, so this is less reliable
-        if perp_value and "totalRawUsd" in ms:
-            try:
-                total_raw = float(ms["totalRawUsd"])
-                perp_val = float(perp_value)
-                # If totalRawUsd is reasonable (not too large), use it
-                if total_raw < perp_val * 3:  # Sanity check
-                    spot_from_diff = total_raw - perp_val
-                    if spot_from_diff > 0:
-                        spot_candidates.append(("totalRawUsd - Perp", spot_from_diff))
-                        logger.debug(f"Method 5 - totalRawUsd - Perp: ${spot_from_diff:,.2f}")
-            except (ValueError, TypeError):
-                pass
-        
-        # Choose the best candidate (prefer explicit spot fields over calculations)
-        if spot_candidates:
-            # Prefer spotMarginSummary, then direct fields, then calculations
-            priority_order = ["spotMarginSummary", "root.spot", "root.spotValue", "totalRawUsd", "assetPositions"]
-            for priority_key in priority_order:
-                for name, val in spot_candidates:
-                    if priority_key in name:
-                        spot_value = str(val)
-                        logger.info(f"Using Spot balance from {name}: ${val:,.2f}")
-                        break
-                if spot_value:
-                    break
-            
-            # Fallback to first candidate
-            if not spot_value:
-                name, val = spot_candidates[0]
-                spot_value = str(val)
-                logger.info(f"Using Spot balance from {name} (fallback): ${val:,.2f}")
+        if spot_balance_total > 0:
+            spot_value = str(spot_balance_total)
+            logger.info(f"Spot balance (from spot_user_state): ${spot_balance_total:,.2f}")
+        else:
+            logger.debug("No Spot balances found in spot_user_state")
         
         # Calculate Total (Combined) = Perp + Spot
         if perp_value and spot_value:
             try:
                 total_value = float(perp_value) + float(spot_value)
                 account_value = str(total_value)
-                logger.debug(f"Total (Combined): Perp {perp_value} + Spot {spot_value} = {account_value}")
+                logger.info(f"Total (Combined): Perp ${float(perp_value):,.2f} + Spot ${float(spot_value):,.2f} = ${total_value:,.2f}")
             except (ValueError, TypeError):
                 account_value = perp_value  # Fallback to Perp only
+                logger.warning("Failed to calculate Total, using Perp only")
         elif perp_value:
             account_value = perp_value
-            logger.warning("No Spot balance found, using Perp only")
+            logger.info(f"Total = Perp only (no Spot): ${float(perp_value):,.2f}")
         
         # Get withdrawable from root level (most accurate - includes all available funds)
         root_withdrawable = raw.get("withdrawable")
