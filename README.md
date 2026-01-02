@@ -64,10 +64,17 @@ chmod +x ./deploy.sh
 - остановит предыдущий контейнер (если был)
 - поднимет новый контейнер с volume `./data → /data` (БД и логи сохраняются между перезапусками)
 
-Логи:
+Логи в консоли:
 
 ```bash
 docker logs -f hyperliquid-trader-watcher
+```
+
+Файлы логов доступны на хосте:
+
+```bash
+ls -lht ./data/logs/
+cat ./data/logs/app_latest.log
 ```
 
 ## Переменные окружения

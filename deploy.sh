@@ -24,9 +24,6 @@ docker build --no-cache --pull -t "${IMAGE_NAME}" .
 echo "Stopping previous container (if exists): ${APP_NAME}"
 docker rm -f "${APP_NAME}" >/dev/null 2>&1 || true
 
-echo "Creating Docker volume for persistent data (if not exists)"
-docker volume create "${APP_NAME}-data" >/dev/null 2>&1 || true
-
 echo "Starting container: ${APP_NAME}"
 docker run -d \
   --name "${APP_NAME}" \
@@ -35,7 +32,7 @@ docker run -d \
   -e DATA_DIR=/data \
   -e DB_PATH=/data/db/app.sqlite3 \
   -e LOG_DIR=/data/logs \
-  -v "${APP_NAME}-data:/data" \
+  -v "$(pwd)/data:/data" \
   "${IMAGE_NAME}"
 
 echo "Done. Logs: docker logs -f ${APP_NAME}"
