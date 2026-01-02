@@ -80,15 +80,26 @@ def traders_list_kb(traders: list[tuple[int, str, str | None]]) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def trader_detail_kb(trader_id: int, positions: list[dict] | None = None) -> InlineKeyboardMarkup:
+def trader_detail_kb(trader_id: int, positions: list[dict] | None = None, sort_by: str = "value") -> InlineKeyboardMarkup:
     """
     Keyboard for trader detail card with position list.
     positions: list of dicts with keys: coin, side, unrealized_pnl, position_value
+    sort_by: "pnl" or "value" - current sorting mode
     """
     rows: list[list[InlineKeyboardButton]] = []
     
-    # Add position buttons if any
+    # Add sorting buttons if there are positions
     if positions:
+        # Sorting buttons
+        pnl_label = "📊 По PnL" + (" ✓" if sort_by == "pnl" else "")
+        value_label = "💰 По Position Value" + (" ✓" if sort_by == "value" else "")
+        
+        rows.append([
+            InlineKeyboardButton(text=pnl_label, callback_data=f"traders:sort:{trader_id}:pnl"),
+            InlineKeyboardButton(text=value_label, callback_data=f"traders:sort:{trader_id}:value"),
+        ])
+        
+        # Add position buttons
         for pos in positions:
             coin = pos.get("coin", "???")
             side = pos.get("side", "")  # "🟢 LONG" or "🔴 SHORT"

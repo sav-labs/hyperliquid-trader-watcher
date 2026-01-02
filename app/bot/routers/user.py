@@ -65,7 +65,7 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         # Auto-approve and set admin flag for admins
         if tg.id in settings.bot_admins:
             if not user.is_admin:
-                user.is_admin = True
+            user.is_admin = True
             if user.status != UserStatus.approved:
                 user.status = UserStatus.approved
 
@@ -245,6 +245,26 @@ async def traders_refresh(call: CallbackQuery, db: Database, hl: HyperliquidClie
     trader_id = int(call.data.split(":")[-1])
     await call.answer("Обновляю...")
     await _show_trader_details(call, db, hl, trader_id, edit=True)
+
+
+@router.callback_query(F.data.startswith("traders:sort:"))
+async def traders_sort(call: CallbackQuery, db: Database, hl: HyperliquidClient) -> None:
+    """Sort positions by PnL or Position Value."""
+    tg = call.from_user
+    if tg is None:
+        return
+    
+    # Parse callback data: traders:sort:{trader_id}:{sort_by}
+    parts = call.data.split(":")
+    if len(parts) < 4:
+        await call.answer("Неверный формат", show_alert=True)
+        return
+    
+    trader_id = int(parts[2])
+    sort_by = parts[3]  # "pnl" or "value"
+    
+    await call.answer()
+    await _show_trader_details(call, db, hl, trader_id, edit=True, sort_by=sort_by)
 
 
 @router.callback_query(F.data.startswith("traders:history:"))
@@ -509,8 +529,11 @@ async def _show_position_detail(call: CallbackQuery, db: Database, hl: Hyperliqu
             raise
 
 
-async def _show_trader_details(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, edit: bool = True) -> None:
-    """Show detailed trader information with live data."""
+async def _show_trader_details(call: CallbackQuery, db: Database, hl: HyperliquidClient, trader_id: int, edit: bool = True, sort_by: str = "value") -> None:
+    """
+    Show detailed trader information with live data.
+    sort_by: "pnl" or "value" - how to sort positions
+    """
     tg = call.from_user
     if tg is None:
         return
@@ -688,6 +711,14 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
                 "unrealized_pnl": upnl_float,
                 "position_value": position_value,
             })
+        
+        # Sort positions based on selected criteria
+        if sort_by == "pnl":
+            # Sort by unrealized PnL (descending - highest profit first)
+            position_buttons.sort(key=lambda x: x["unrealized_pnl"], reverse=True)
+        else:  # sort_by == "value"
+            # Sort by position value (descending - largest position first)
+            position_buttons.sort(key=lambda x: x["position_value"], reverse=True)
     else:
         text += "📭 Нет открытых позиций\n"
     
@@ -697,7 +728,7 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
         try:
             await call.message.edit_text(
                 text, 
-                reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None), 
+                reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None, sort_by), 
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -707,7 +738,7 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     else:
         await call.message.answer(
             text, 
-            reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None), 
+            reply_markup=trader_detail_kb(trader_id, position_buttons if position_buttons else None, sort_by), 
             parse_mode="Markdown"
         )
 
