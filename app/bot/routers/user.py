@@ -382,12 +382,13 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     withdrawable = snapshot.withdrawable or "0"
     total_position_value = snapshot.total_position_value
     
-    # Calculate leverage: totalPositionValue / accountValue
+    # Calculate leverage: totalPositionValue / Perp (as on HyperDash)
+    # Leverage applies only to Perp positions, not Spot
     leverage_multiplier = 0.0
     try:
-        account_value_float = float(account_value)
-        if account_value_float > 0 and total_position_value > 0:
-            leverage_multiplier = total_position_value / account_value_float
+        perp_value_float = float(perp_value)
+        if perp_value_float > 0 and total_position_value > 0:
+            leverage_multiplier = total_position_value / perp_value_float
     except (ValueError, TypeError, ZeroDivisionError):
         pass
     
@@ -460,11 +461,12 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     text += f"   • Perp: ${_fmt_number(perp_value)}\n"
     text += f"   • Spot: ${_fmt_number(spot_value)}\n\n"
     
-    # Withdrawable amount
+    # Withdrawable amount (% calculated from Perp equity, as on HyperDash)
     try:
         withdrawable_float = float(withdrawable)
-        withdrawable_percent = (withdrawable_float / float(account_value) * 100) if float(account_value) > 0 else 0
-        text += f"💵 **Withdrawable:** ${_fmt_number(withdrawable)} ({withdrawable_percent:.1f}%)\n"
+        perp_value_float = float(perp_value)
+        withdrawable_percent = (withdrawable_float / perp_value_float * 100) if perp_value_float > 0 else 0
+        text += f"💵 **Withdrawable:** ${_fmt_number(withdrawable)} ({withdrawable_percent:.2f}%)\n"
     except (ValueError, TypeError, ZeroDivisionError):
         text += f"💵 **Withdrawable:** ${_fmt_number(withdrawable)}\n"
     

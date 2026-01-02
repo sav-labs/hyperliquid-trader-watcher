@@ -16,9 +16,15 @@
 - Расчет: `token_amount × current_price = USD value`
 - Total (Combined) = Perp (marginSummary) + Spot (tokens × prices)
 
+**Исправлено отображение Withdrawable % и Leverage:**
+- **Withdrawable %** = `withdrawable / Perp equity` (а не Total!)
+- **Leverage** = `total_position_value / Perp equity` (а не Total!)
+- Это соответствует HyperDash, т.к. Spot не использует margin/leverage
+
 **Commits:** 
 - `beedee0` - Fix: Use spot_user_state API to get Spot balances
 - `85052e0` - Fix: Calculate Spot balance in USD using token prices
+- `[latest]` - Fix: Calculate Withdrawable % and Leverage from Perp equity
 
 ## Обновление на сервере
 
