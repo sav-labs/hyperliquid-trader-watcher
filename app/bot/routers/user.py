@@ -376,7 +376,9 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
     user_state = snapshot.user_state
     
     # Parse data
-    account_value = snapshot.account_value or "0"
+    account_value = snapshot.account_value or "0"  # Total (Combined)
+    perp_value = snapshot.perp_value or "0"
+    spot_value = snapshot.spot_value or "0"
     withdrawable = snapshot.withdrawable or "0"
     total_position_value = snapshot.total_position_value
     
@@ -450,9 +452,13 @@ async def _show_trader_details(call: CallbackQuery, db: Database, hl: Hyperliqui
         if total_margin_used > 0:
             pnl_percent = (unrealized_pnl / total_margin_used) * 100
     
-    # Format message
+    # Format message with detailed breakdown like HyperDash
     text = f"📊 Трейдер: `{trader.address}`\n\n"
-    text += f"💰 **Баланс:** ${_fmt_number(account_value)}\n"
+    
+    # Total Value (Combined) with Perp and Spot breakdown
+    text += f"💰 **Total Value (Combined):** ${_fmt_number(account_value)}\n"
+    text += f"   • Perp: ${_fmt_number(perp_value)}\n"
+    text += f"   • Spot: ${_fmt_number(spot_value)}\n\n"
     
     # Withdrawable amount
     try:

@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class HyperliquidUserSnapshot:
     user_state: dict[str, Any]
     account_value: str | None  # Total account value (Combined: Perp + Spot)
+    perp_value: str | None     # Perp equity only
+    spot_value: str | None     # Spot assets only
     withdrawable: str | None   # Amount available for withdrawal
     total_position_value: float  # Total notional value of all positions (for leverage calc)
     positions: dict[str, dict[str, Any]]  # coin -> position dict (normalized)
@@ -50,6 +52,13 @@ class HyperliquidClient:
             logger.debug(f"[DEBUG] crossMarginSummary: {json.dumps(raw['crossMarginSummary'], indent=2)}")
         logger.debug(f"[DEBUG] withdrawable (root): {raw.get('withdrawable', 'NOT FOUND')}")
         
+        # Log asset positions to find Spot balances
+        asset_positions = raw.get("assetPositions", [])
+        logger.debug(f"[DEBUG] assetPositions count: {len(asset_positions)}")
+        
+        # Log ALL asset positions to understand structure
+        logger.debug(f"[DEBUG] ALL assetPositions: {json.dumps(asset_positions, indent=2)}")
+        
         positions: dict[str, dict[str, Any]] = {}
         total_position_value = 0.0
         total_spot_value = 0.0
@@ -68,24 +77,131 @@ class HyperliquidClient:
             except (ValueError, TypeError):
                 pass
 
-        # Calculate account value - use marginSummary.accountValue (Perp equity)
-        # Note: HyperDash "Total Value (Combined)" includes Perp + Spot, but API structure varies
-        # marginSummary.accountValue = Perp equity (cross + isolated)
-        # marginSummary.totalRawUsd = Total including all assets (may include extra isolated positions)
+        # Calculate account values
+        # HyperDash shows: Total (Combined) = Perp + Spot
         account_value = None
+        perp_value = None
+        spot_value = None
         withdrawable = None
         
         # Get values from marginSummary (main account summary)
         ms = raw.get("marginSummary") or {}
+        cross_ms = raw.get("crossMarginSummary") or {}
         
-        # Use accountValue from marginSummary (Perp equity)
+        # Perp equity from marginSummary
         perp_account_value = ms.get("accountValue")
         if perp_account_value:
             try:
-                account_value = str(float(perp_account_value))
-                logger.debug(f"Using marginSummary.accountValue (Perp equity): {account_value}")
+                perp_value = str(float(perp_account_value))
+                logger.debug(f"Perp equity (marginSummary.accountValue): {perp_value}")
             except (ValueError, TypeError):
                 pass
+        
+        # Try to get Spot balance using multiple methods
+        spot_candidates = []
+        
+        # Method 1: Check if there's a spotMarginSummary
+        spot_ms = raw.get("spotMarginSummary") or {}
+        if spot_ms.get("accountValue"):
+            try:
+                val = float(spot_ms["accountValue"])
+                spot_candidates.append(("spotMarginSummary.accountValue", val))
+                logger.debug(f"Method 1 - spotMarginSummary.accountValue: ${val:,.2f}")
+            except (ValueError, TypeError):
+                pass
+        
+        # Method 2: Calculate from assetPositions - sum spot holdings
+        spot_balance_from_positions = 0.0
+        for ap in raw.get("assetPositions", []):
+            position = ap.get("position")
+            if not position:
+                continue
+            
+            coin = position.get("coin", "")
+            szi = position.get("szi", "0")
+            
+            # Skip perp positions (those with non-zero szi)
+            try:
+                if float(szi) != 0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            
+            # This might be a spot holding - look for balance fields
+            for key in ["balance", "total", "accountValue", "value"]:
+                if key in ap:
+                    try:
+                        spot_balance_from_positions += float(ap[key])
+                    except (ValueError, TypeError):
+                        pass
+        
+        if spot_balance_from_positions > 0:
+            spot_candidates.append(("assetPositions (zero szi)", spot_balance_from_positions))
+            logger.debug(f"Method 2 - Spot from assetPositions: ${spot_balance_from_positions:,.2f}")
+        
+        # Method 3: Try direct "spot" field if exists
+        if "spot" in raw:
+            try:
+                val = float(raw["spot"])
+                spot_candidates.append(("root.spot", val))
+                logger.debug(f"Method 3 - root.spot: ${val:,.2f}")
+            except (ValueError, TypeError):
+                pass
+        
+        # Method 4: Try spotValue field
+        if "spotValue" in raw:
+            try:
+                val = float(raw["spotValue"])
+                spot_candidates.append(("root.spotValue", val))
+                logger.debug(f"Method 4 - root.spotValue: ${val:,.2f}")
+            except (ValueError, TypeError):
+                pass
+        
+        # Method 5: Calculate as difference between totalRawUsd and perp positions
+        # totalRawUsd might include isolated positions, so this is less reliable
+        if perp_value and "totalRawUsd" in ms:
+            try:
+                total_raw = float(ms["totalRawUsd"])
+                perp_val = float(perp_value)
+                # If totalRawUsd is reasonable (not too large), use it
+                if total_raw < perp_val * 3:  # Sanity check
+                    spot_from_diff = total_raw - perp_val
+                    if spot_from_diff > 0:
+                        spot_candidates.append(("totalRawUsd - Perp", spot_from_diff))
+                        logger.debug(f"Method 5 - totalRawUsd - Perp: ${spot_from_diff:,.2f}")
+            except (ValueError, TypeError):
+                pass
+        
+        # Choose the best candidate (prefer explicit spot fields over calculations)
+        if spot_candidates:
+            # Prefer spotMarginSummary, then direct fields, then calculations
+            priority_order = ["spotMarginSummary", "root.spot", "root.spotValue", "totalRawUsd", "assetPositions"]
+            for priority_key in priority_order:
+                for name, val in spot_candidates:
+                    if priority_key in name:
+                        spot_value = str(val)
+                        logger.info(f"Using Spot balance from {name}: ${val:,.2f}")
+                        break
+                if spot_value:
+                    break
+            
+            # Fallback to first candidate
+            if not spot_value:
+                name, val = spot_candidates[0]
+                spot_value = str(val)
+                logger.info(f"Using Spot balance from {name} (fallback): ${val:,.2f}")
+        
+        # Calculate Total (Combined) = Perp + Spot
+        if perp_value and spot_value:
+            try:
+                total_value = float(perp_value) + float(spot_value)
+                account_value = str(total_value)
+                logger.debug(f"Total (Combined): Perp {perp_value} + Spot {spot_value} = {account_value}")
+            except (ValueError, TypeError):
+                account_value = perp_value  # Fallback to Perp only
+        elif perp_value:
+            account_value = perp_value
+            logger.warning("No Spot balance found, using Perp only")
         
         # Get withdrawable from root level (most accurate - includes all available funds)
         root_withdrawable = raw.get("withdrawable")
@@ -96,11 +212,13 @@ class HyperliquidClient:
             withdrawable = str(ms.get("withdrawable", "0"))
             logger.debug(f"Using marginSummary.withdrawable: {withdrawable}")
         
-        logger.debug(f"[DEBUG] Final values: account_value={account_value}, withdrawable={withdrawable}, total_position_value={total_position_value}")
-
+        logger.debug(f"[DEBUG] Final values: account_value={account_value}, perp_value={perp_value}, spot_value={spot_value}, withdrawable={withdrawable}, total_position_value={total_position_value}")
+        
         return HyperliquidUserSnapshot(
             user_state=raw,
             account_value=account_value,
+            perp_value=perp_value,
+            spot_value=spot_value,
             withdrawable=withdrawable,
             total_position_value=total_position_value,
             positions=positions,
