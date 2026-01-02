@@ -52,6 +52,8 @@
 - `0623bda` - feat: Add compact number formatting for position buttons
 - `1bb7286` - feat: Add position sorting by PnL and Position Value
 - `405ffdc` - feat: Improve position detail layout - combine Position Value and Size
+- `4424a5f` - fix: Fix IndentationError in user.py
+- `a127a7b` - fix: Show negative sign for negative PnL in position buttons
 
 ## Обновление на сервере
 
