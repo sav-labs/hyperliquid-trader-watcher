@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import logging
+from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher
 
@@ -12,6 +14,26 @@ from app.monitoring.monitor import TraderMonitor
 from app.notify.telegram import TelegramNotifier
 from app.notify.formatter import AlertFormatter
 from settings import Settings
+
+logger = logging.getLogger(__name__)
+
+
+async def notify_admins_startup(bot: Bot, settings: Settings) -> None:
+    """Notify admins that bot has started."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    message = (
+        "🚀 <b>Бот запущен</b>\n\n"
+        f"⏰ Время: <code>{timestamp}</code>\n"
+        f"📊 Интервал опроса: {settings.hl_poll_interval_seconds}s\n"
+        f"📝 Уровень логов: {settings.log_level}"
+    )
+    
+    for admin_id in settings.bot_admins:
+        try:
+            await bot.send_message(chat_id=admin_id, text=message, parse_mode="HTML")
+            logger.info(f"Startup notification sent to admin {admin_id}")
+        except Exception as e:
+            logger.warning(f"Failed to notify admin {admin_id}: {e}")
 
 
 async def main() -> None:
@@ -42,6 +64,9 @@ async def main() -> None:
         formatter=formatter,
         poll_interval_seconds=settings.hl_poll_interval_seconds,
     )
+
+    # Notify admins about startup
+    await notify_admins_startup(bot, settings)
 
     monitor_task = asyncio.create_task(monitor.run_forever(), name="hyperliquid-monitor")
     try:

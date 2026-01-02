@@ -62,8 +62,12 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         users = UserRepository(session)
         user = await users.get_or_create(telegram_id=tg.id, username=tg.username)
 
-        if tg.id in settings.bot_admins and not user.is_admin:
-            user.is_admin = True
+        # Auto-approve and set admin flag for admins
+        if tg.id in settings.bot_admins:
+            if not user.is_admin:
+                user.is_admin = True
+            if user.status != UserStatus.approved:
+                user.status = UserStatus.approved
 
         await session.commit()
 
