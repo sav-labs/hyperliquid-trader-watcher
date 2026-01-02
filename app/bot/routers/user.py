@@ -505,16 +505,31 @@ async def _show_position_detail(call: CallbackQuery, db: Database, hl: Hyperliqu
     try:
         fills = await hl.fetch_user_fills(trader.address, coin)
         if fills:
+            # DEBUG: Log first fill to understand structure
+            if fills:
+                logger.debug(f"[DEBUG] First fill for {coin}: {fills[0]}")
+            
             # Show last 5 fills
             for fill in fills[:5]:
                 fill_time = _format_timestamp(fill.get("time", 0))
                 fill_px = fill.get("px", "0")
                 fill_sz = fill.get("sz", "0")
-                fill_side = fill.get("side", "")
+                fill_side = fill.get("side", "")  # Can be "A" (ask/sell) or "B" (bid/buy)
                 fill_fee = fill.get("fee", "0")
                 
-                side_emoji = "🟢" if fill_side.upper() == "BUY" else "🔴"
-                text += f"  {side_emoji} {fill_side.upper()} {_fmt_number(fill_sz)} @ ${_fmt_number(fill_px)}\n"
+                # Side determination: "A" = sell/short, "B" = buy/long
+                # Note: For a SHORT position, "B" means closing (buying back)
+                if fill_side == "B":
+                    side_emoji = "🟢"
+                    side_text = "BUY"
+                elif fill_side == "A":
+                    side_emoji = "🔴"
+                    side_text = "SELL"
+                else:
+                    side_emoji = "⚪️"
+                    side_text = fill_side
+                
+                text += f"  {side_emoji} {side_text} {_fmt_number(fill_sz)} @ ${_fmt_number(fill_px)}\n"
                 text += f"    └ {fill_time} | Fee: ${_fmt_number(fill_fee)}\n"
         else:
             text += "  _Нет данных о сделках_\n"
