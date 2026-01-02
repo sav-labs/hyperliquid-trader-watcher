@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -39,8 +40,19 @@ class HyperliquidClient:
             return self._info.user_state(addr)
 
         raw = await asyncio.to_thread(_call)
+        
+        # DEBUG: Log full structure to understand API response
+        logger.debug(f"[DEBUG] user_state for {addr[:10]}...")
+        logger.debug(f"[DEBUG] Top-level keys: {list(raw.keys())}")
+        if "marginSummary" in raw:
+            logger.debug(f"[DEBUG] marginSummary: {json.dumps(raw['marginSummary'], indent=2)}")
+        if "crossMarginSummary" in raw:
+            logger.debug(f"[DEBUG] crossMarginSummary: {json.dumps(raw['crossMarginSummary'], indent=2)}")
+        logger.debug(f"[DEBUG] withdrawable (root): {raw.get('withdrawable', 'NOT FOUND')}")
+        
         positions: dict[str, dict[str, Any]] = {}
         total_position_value = 0.0
+        total_spot_value = 0.0
         
         for ap in raw.get("assetPositions", []) or []:
             p = ap.get("position") or {}
@@ -49,28 +61,56 @@ class HyperliquidClient:
                 continue
             positions[str(coin)] = p
             
-            # Calculate total position value (notional)
+            # Calculate total position value (notional) for Perp positions
             try:
                 position_value = abs(float(p.get("positionValue", 0)))
                 total_position_value += position_value
             except (ValueError, TypeError):
                 pass
 
-        # Extract account value: try crossMarginSummary first (total), then marginSummary (perp only)
+        # Calculate Total Value (Combined: Perp + Spot)
         account_value = None
         withdrawable = None
+        perp_value = 0.0
         
+        # Get Perp equity from marginSummary
+        ms = raw.get("marginSummary") or {}
+        if "accountValue" in ms:
+            try:
+                perp_value = float(ms.get("accountValue", 0))
+            except (ValueError, TypeError):
+                pass
+        
+        # Get Spot balances - look at withdrawable at root level
+        # withdrawable typically includes all available funds (Perp + Spot)
+        root_withdrawable = raw.get("withdrawable")
+        
+        # Try crossMarginSummary first (most accurate for Combined)
         cross_ms = raw.get("crossMarginSummary") or {}
         if "accountValue" in cross_ms:
-            # crossMarginSummary has the total (Combined: Perp + Spot)
             account_value = str(cross_ms.get("accountValue"))
-            withdrawable = str(cross_ms.get("withdrawable", "0"))
+            withdrawable = str(root_withdrawable or cross_ms.get("withdrawable", "0"))
+            logger.debug(f"Using crossMarginSummary.accountValue: {account_value}")
         else:
-            # Fallback to marginSummary (Perp only)
-            ms = raw.get("marginSummary") or {}
-            if "accountValue" in ms:
-                account_value = str(ms.get("accountValue"))
-            withdrawable = str(ms.get("withdrawable", "0"))
+            # Calculate total manually: Try to get total from root withdrawable + unrealized PnL
+            # Or use totalRawUsd if available
+            total_raw_usd = ms.get("totalRawUsd")
+            if total_raw_usd:
+                try:
+                    account_value = str(float(total_raw_usd))
+                    logger.debug(f"Using marginSummary.totalRawUsd: {account_value}")
+                except (ValueError, TypeError):
+                    pass
+            
+            # If still no account_value, fallback to perp only
+            if not account_value and perp_value > 0:
+                account_value = str(perp_value)
+                logger.warning(f"Using marginSummary.accountValue (Perp only): {account_value}")
+            
+            # Use root withdrawable if available
+            withdrawable = str(root_withdrawable or ms.get("withdrawable", "0"))
+        
+        logger.debug(f"[DEBUG] Final values: account_value={account_value}, withdrawable={withdrawable}, total_position_value={total_position_value}")
 
         return HyperliquidUserSnapshot(
             user_state=raw,
