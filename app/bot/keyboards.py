@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
 def _fmt_balance(value: str | None) -> str | None:
@@ -44,7 +44,26 @@ def _fmt_compact(value: str | float | None) -> str:
         return str(value)
 
 
+def main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
+    """
+    Permanent reply keyboard with main menu buttons.
+    Always visible at the bottom of the screen.
+    """
+    rows = [
+        [KeyboardButton(text="Трейдеры")]
+    ]
+    if is_admin:
+        rows.append([KeyboardButton(text="Админ-панель"), KeyboardButton(text="Настройки")])
+    
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        persistent=True,
+    )
+
+
 def main_menu_kb(is_admin: bool) -> InlineKeyboardMarkup:
+    """Legacy inline menu - kept for backwards compatibility."""
     rows = [
         [InlineKeyboardButton(text="Трейдеры", callback_data="menu:traders")]
     ]

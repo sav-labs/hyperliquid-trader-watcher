@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.bot.keyboards import main_menu_kb, traders_list_kb, traders_menu_kb
+from app.bot.keyboards import main_keyboard, main_menu_kb, traders_list_kb, traders_menu_kb
 from app.bot.states import UserStates
 from app.db.engine import Database
 from app.db.models import UserStatus
@@ -65,7 +65,7 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         # Auto-approve and set admin flag for admins
         if tg.id in settings.bot_admins:
             if not user.is_admin:
-                user.is_admin = True
+            user.is_admin = True
             if user.status != UserStatus.approved:
                 user.status = UserStatus.approved
 
@@ -89,7 +89,12 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
                 logger.exception("Failed to notify admin %s", admin_id)
         return
 
-    await message.answer("Меню:", reply_markup=main_menu_kb(is_admin=user.is_admin))
+    # Show permanent keyboard
+    await message.answer(
+        "👋 Добро пожаловать!\n\n"
+        "Используйте кнопки ниже для навигации:",
+        reply_markup=main_keyboard(is_admin=user.is_admin)
+    )
 
 
 def __admin_quick_kb(user_tg_id: int):
@@ -100,6 +105,7 @@ def __admin_quick_kb(user_tg_id: int):
 
 @router.message(F.text == "/menu")
 async def menu(message: Message, db: Database) -> None:
+    """Legacy menu command - kept for backwards compatibility."""
     tg = message.from_user
     if tg is None:
         return
@@ -110,6 +116,75 @@ async def menu(message: Message, db: Database) -> None:
             await message.answer("Нет доступа. Нажмите /start и дождитесь одобрения.")
             return
         await message.answer("Меню:", reply_markup=main_menu_kb(is_admin=user.is_admin))
+
+
+# ============= Reply keyboard handlers (text buttons) =============
+
+@router.message(F.text == "Трейдеры")
+async def traders_button(message: Message, db: Database, hl: HyperliquidClient) -> None:
+    """Handle 'Трейдеры' button from reply keyboard."""
+    await _send_traders_list(message, db, hl)
+
+
+@router.message(F.text == "Админ-панель")
+async def admin_panel_button(message: Message, db: Database) -> None:
+    """Handle 'Админ-панель' button from reply keyboard."""
+    from app.bot.keyboards import admin_menu_kb
+    from app.db.models import UserStatus
+    
+    tg = message.from_user
+    if tg is None:
+        return
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        user = await users.get_by_telegram_id(tg.id)
+        
+        if user is None or user.status != UserStatus.approved:
+            await message.answer("Нет доступа.")
+            return
+        
+        if not user.is_admin:
+            await message.answer("Эта функция доступна только администраторам.")
+            return
+        
+        # Count pending requests
+        pending = await users.list_by_status(UserStatus.pending)
+        
+    await message.answer(
+        f"Админ-панель\n\nНовых заявок: {len(pending)}",
+        reply_markup=admin_menu_kb(pending_count=len(pending))
+    )
+
+
+@router.message(F.text == "Настройки")
+async def settings_button(message: Message, db: Database) -> None:
+    """Handle 'Настройки' button from reply keyboard."""
+    tg = message.from_user
+    if tg is None:
+        return
+    
+    async with db.sessionmaker() as session:
+        users = UserRepository(session)
+        user = await users.get_by_telegram_id(tg.id)
+        
+        if user is None or user.status != UserStatus.approved:
+            await message.answer("Нет доступа.")
+            return
+        
+        if not user.is_admin:
+            await message.answer("Эта функция доступна только администраторам.")
+            return
+        
+        mode = user.delivery_mode.value
+        chat = user.delivery_chat_id or ""
+    
+    await message.answer(
+        "⚙️ Настройки доставки:\n\n"
+        f"Текущий режим: {mode} {chat}\n\n"
+        "По умолчанию алерты приходят в ЛС.\n"
+        "Настройку отправки в канал делает администратор."
+    )
 
 
 @router.callback_query(F.data == "menu:back")
