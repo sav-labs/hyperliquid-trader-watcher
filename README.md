@@ -99,6 +99,10 @@ cat ./data/logs/app_latest.log
 - **BOT_TOKEN**: токен Telegram-бота
 - **BOT_ADMINS**: Telegram user ids админов (через запятую)
 - **HL_POLL_INTERVAL_SECONDS**: частота опроса Hyperliquid (по умолчанию 10 секунд)
+- **ONLY_MAJOR_POSITION_EVENTS**: режим алертов позиций (по умолчанию `true`)
+  - `true` - только важные события: открытие/закрытие/разворот позиций (рекомендуется)
+  - `false` - все изменения позиций выше порога `MIN_POSITION_CHANGE_PCT`
+- **MIN_POSITION_CHANGE_PCT**: минимальный порог изменения позиции для алерта в % (по умолчанию 1.0, используется только если `ONLY_MAJOR_POSITION_EVENTS=false`)
 - **LOG_LEVEL**: `DEBUG` или `INFO` (по умолчанию `INFO`)
 - **MAX_LOG_FILES**: количество хранимых файлов логов (по умолчанию 50)
 - **DB_PATH**: путь к sqlite БД (по умолчанию `./data/db/app.sqlite3`)

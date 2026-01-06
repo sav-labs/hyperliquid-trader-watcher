@@ -14,6 +14,16 @@ class Settings(BaseSettings):
     bot_admins: set[int] = Field(default_factory=set, alias="BOT_ADMINS")
 
     hl_poll_interval_seconds: int = Field(default=10, alias="HL_POLL_INTERVAL_SECONDS", ge=2, le=3600)
+    
+    # Position alerts mode:
+    # - If True: ONLY send alerts for open/close/flip (major events)
+    # - If False: Send alerts for all position changes above MIN_POSITION_CHANGE_PCT threshold
+    only_major_position_events: bool = Field(default=True, alias="ONLY_MAJOR_POSITION_EVENTS")
+    
+    # Minimum position change threshold to trigger alerts (percentage)
+    # Only used when only_major_position_events=False
+    # Changes smaller than this % will be ignored to reduce spam from micro-adjustments
+    min_position_change_pct: float = Field(default=1.0, alias="MIN_POSITION_CHANGE_PCT", ge=0.0, le=100.0)
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO", alias="LOG_LEVEL")
     max_log_files: int = Field(default=50, alias="MAX_LOG_FILES", ge=1, le=500)

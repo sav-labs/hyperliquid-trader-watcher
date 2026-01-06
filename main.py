@@ -61,11 +61,15 @@ def get_git_info() -> dict[str, str]:
 async def notify_admins_startup(bot: Bot, settings: Settings, git_info: dict[str, str]) -> None:
     """Notify admins that bot has started."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    alert_mode = "🎯 Только важные события" if settings.only_major_position_events else f"📊 Все изменения ≥{settings.min_position_change_pct}%"
+    
     message = (
         "🚀 <b>Бот запущен</b>\n\n"
         f"⏰ Время: <code>{timestamp}</code>\n"
         f"🔖 Версия: <code>{git_info['branch']}@{git_info['short_commit']}</code>\n"
         f"📊 Интервал опроса: {settings.hl_poll_interval_seconds}s\n"
+        f"{alert_mode}\n"
         f"📝 Уровень логов: {settings.log_level}"
     )
     
@@ -108,6 +112,8 @@ async def main() -> None:
         notifier=notifier,
         formatter=formatter,
         poll_interval_seconds=settings.hl_poll_interval_seconds,
+        only_major_position_events=settings.only_major_position_events,
+        min_position_change_pct=settings.min_position_change_pct,
     )
 
     # Notify admins about startup

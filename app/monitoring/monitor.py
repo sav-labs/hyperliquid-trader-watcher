@@ -51,12 +51,16 @@ class TraderMonitor:
         notifier: TelegramNotifier,
         formatter: AlertFormatter,
         poll_interval_seconds: int,
+        only_major_position_events: bool = True,
+        min_position_change_pct: float = 1.0,
     ) -> None:
         self._db = db
         self._hl = hl
         self._notifier = notifier
         self._formatter = formatter
         self._poll_interval_seconds = poll_interval_seconds
+        self._only_major_position_events = only_major_position_events
+        self._min_position_change_pct = min_position_change_pct
         self._sem = asyncio.Semaphore(8)
 
     async def run_forever(self) -> None:
@@ -132,8 +136,45 @@ class TraderMonitor:
                 np = new_positions.get(coin) or {}
                 old_szi = _safe_float(op.get("szi"))
                 new_szi = _safe_float(np.get("szi"))
+                
+                # Skip if no change in position size (szi = signed size in tokens)
                 if old_szi == new_szi:
                     continue
+
+                # Detect position open/close/flip - these are ALWAYS significant
+                opened = old_szi == 0 and new_szi != 0
+                closed = old_szi != 0 and new_szi == 0
+                flipped = old_szi != 0 and new_szi != 0 and (old_szi > 0) != (new_szi > 0)
+                
+                # Filter based on mode
+                if self._only_major_position_events:
+                    # Mode: ONLY major events (open/close/flip)
+                    if not (opened or closed or flipped):
+                        logger.debug(
+                            f"[{address[:8]}] Skipping position adjustment for {coin}: "
+                            f"{old_szi:.4f} → {new_szi:.4f} (only_major_events=True)"
+                        )
+                        continue
+                else:
+                    # Mode: All changes above threshold
+                    # For position adjustments (not open/close/flip), filter out micro-changes
+                    if not (opened or closed or flipped):
+                        change_abs = abs(new_szi - old_szi)
+                        base_size = max(abs(old_szi), abs(new_szi))
+                        if base_size > 0:
+                            change_pct = (change_abs / base_size) * 100
+                            if change_pct < self._min_position_change_pct:
+                                logger.debug(
+                                    f"[{address[:8]}] Skipping micro-change for {coin}: "
+                                    f"{old_szi:.4f} → {new_szi:.4f} ({change_pct:.2f}% < {self._min_position_change_pct}%)"
+                                )
+                                continue
+
+                logger.info(
+                    f"[{address[:8]}] Position change detected for {coin}: "
+                    f"szi {old_szi:.4f} → {new_szi:.4f} "
+                    f"(opened={opened}, closed={closed}, flipped={flipped})"
+                )
 
                 position_events.append(
                     PositionChange(
