@@ -65,7 +65,7 @@ async def start(message: Message, db: Database, settings: Settings) -> None:
         # Auto-approve and set admin flag for admins
         if tg.id in settings.bot_admins:
             if not user.is_admin:
-                user.is_admin = True
+            user.is_admin = True
             if user.status != UserStatus.approved:
                 user.status = UserStatus.approved
 
@@ -149,7 +149,7 @@ async def admin_panel_button(message: Message, db: Database) -> None:
             return
         
         # Count pending requests
-        pending = await users.list_by_status(UserStatus.pending)
+        pending = await users.list_pending()
         
     await message.answer(
         f"Админ-панель\n\nНовых заявок: {len(pending)}",
